@@ -1,32 +1,29 @@
 # conapesca-db-mcp
 
-MCP server for querying the CONAPESCA Pacific landings database (2001–2026).
+MCP server for querying the CONAPESCA historical landings database (2001–2026),
+covering both the Pacific and Gulf coasts of Mexico.
 
 Exposes tools for extraction and consultation of standardized fishing landings
-data (*avisos de arribo*) from the Mexican Pacific coast.
+data (*avisos de arribo*).
 
 ## Tools available
 
 ### Data access (raw extraction)
 | Tool | Description |
 |------|-------------|
-| `get_years()` | Available years in the database |
-| `get_estados(year?)` | States with landings |
-| `get_fleet_types()` | MAYORES / MENORES / COSECHA breakdown |
-| `get_species(year?, estado?, tipo_aviso?)` | Species list with total weight |
-| `get_landings(year?, estado?, especie?, ...)` | Individual landing records |
+| `get_estados(year?)` | States with landings, optional year filter |
+| `get_species(year?, estado?, tipo_aviso?, top_n?)` | Species list with total weight and value |
+| `species_count()` | Unique scientific names classified by taxonomic level |
+| `get_landings(year?, estado?, especie?, tipo_aviso?, oficina?, limit?, group_by?)` | Landing records or aggregates; `group_by`: `"year"`, `"estado"`, `"litoral"` |
 | `get_offices(estado?)` | CONAPESCA offices with record counts |
 | `get_taxonomy(especie)` | Taxonomy + FishBase traits for a species |
 
 ### Reporting (summaries)
 | Tool | Description |
 |------|-------------|
-| `numeralia()` | Overall totals: records, species, states, weight |
-| `landings_by_year(estado?, tipo_aviso?)` | Annual weight + value |
-| `landings_by_estado(year?, tipo_aviso?)` | By state |
-| `landings_by_species(year?, estado?, top_n?)` | Top species by weight |
+| `landings_by_year(estado?, tipo_aviso?)` | Annual totals: weight, value, species count |
+| `landings_by_estado(year?, tipo_aviso?)` | Totals by state |
 | `landings_by_fleet_type(year?)` | MAYORES vs MENORES vs COSECHA |
-| `landings_by_fishing_type(year?, estado?)` | ARTESANAL vs INDUSTRIAL vs ALTURA |
 
 ### Core
 | Tool | Description |
@@ -71,8 +68,8 @@ CONAPESCA_DB_PASSWORD=...
 CONAPESCA_DB_NAME=...
 ```
 
-The table expected in MySQL is `conapesca_landings` with the same schema
-as the pipeline output (`conapesca_landings_2001_2026.rds`).
+The table expected in MySQL is `conapesca_landings_historical` with the same schema
+as the pipeline output.
 
 ## Resources
 
