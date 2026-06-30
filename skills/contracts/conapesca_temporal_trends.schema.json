@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cbmc.org/schemas/skills/conapesca_temporal_trends.schema.json",
+  "title": "CONAPESCA Temporal Trends Inputs",
+  "description": "Inputs for species landing trend analysis",
+  "type": "object",
+  "properties": {
+    "especie": {
+      "type": "string",
+      "description": "Species name (scientific or common). Required."
+    },
+    "group_by": {
+      "type": ["string", "null"],
+      "description": "Aggregation dimension: 'year', 'estado', or 'litoral'",
+      "enum": ["year", "estado", "litoral", null],
+      "default": "year"
+    },
+    "estado": {
+      "type": ["string", "null"],
+      "description": "Filter by Mexican state (optional, use with group_by='year')"
+    },
+    "tipo_aviso": {
+      "type": ["string", "null"],
+      "description": "Fleet type filter: MAYORES, MENORES, or COSECHA",
+      "enum": ["MAYORES", "MENORES", "COSECHA", null]
+    }
+  },
+  "required": ["especie"],
+  "additionalProperties": false
+}

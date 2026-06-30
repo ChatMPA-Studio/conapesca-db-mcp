@@ -15,7 +15,7 @@ from mcp_server.schema import build_schema_snapshot
 
 logger = logging.getLogger("conapesca_mcp.server")
 
-mcp = FastMCP("CONAPESCA Pacific Landings")
+mcp = FastMCP("CONAPESCA Landings")
 
 
 # ── Core tools (defined inline) ---------------------------------------------
@@ -32,7 +32,7 @@ def health_check() -> str:
 
 @mcp.tool()
 def schema_snapshot() -> str:
-    """Return the full schema of conapesca_landings: columns, types, row count."""
+    """Return the full schema of conapesca_landings_historical: columns, types, row count."""
     try:
         snap = build_schema_snapshot()
         return json.dumps(snap, ensure_ascii=False, default=str)
@@ -44,14 +44,14 @@ def schema_snapshot() -> str:
 
 @mcp.resource("conapesca://data-dictionary")
 def data_dictionary() -> str:
-    """Column descriptions for the conapesca_landings table."""
+    """Column descriptions for the conapesca_landings_historical table."""
     return """
 # CONAPESCA Landings — Data Dictionary
 
 ## Provenance
-- source_dataset : Origin (rds_pacifico_2001_2021 / csv_2022 / csv+rds)
-- source_file    : Source filename
-- litoral        : Coast (PACIFICO)
+- source_dataset : Internal provenance tag (data engineering use only)
+- source_file    : Internal source filename (data engineering use only)
+- litoral        : Coast (PACIFICO / GOLFO)
 
 ## Temporal
 - anio_corte     : Landing year (authoritative)
@@ -107,17 +107,15 @@ def data_dictionary() -> str:
 def coverage_info() -> str:
     """Geographic and temporal coverage of the database."""
     return """
-# CONAPESCA Pacific Landings — Coverage
+# CONAPESCA Landings Historical — Coverage
 
 ## Temporal
 - Years: 2001–2026 (fiscal year of landing)
-- Historical RDS: 2001–2021 (AWS MariaDB source)
-- CSV exports: 2018–2026 (annual CONAPESCA exports, overlapping years deduplicated)
+- Source: AWS MariaDB historical table (conapesca_landings_historical)
 
 ## Geographic
-- Coast: Pacific only (Litoral Pacífico)
-- States covered: Baja California, Baja California Sur, Sonora, Sinaloa,
-  Nayarit, Jalisco, Colima, Michoacán, Guerrero, Oaxaca, Chiapas
+- All Mexican coasts (Pacific + Gulf + Caribbean)
+- 32 states covered
 
 ## Fleet types
 - MAYORES  : Industrial fleet (large vessels, offshore)
@@ -125,7 +123,7 @@ def coverage_info() -> str:
 - COSECHA  : Aquaculture production reports
 
 ## Species
-- ~1,295 unique species × presentation combinations (clave_especie)
+- ~1,057 unique species × presentation combinations
 - Taxonomy validated via WoRMS; FishBase/SeaLifeBase traits available for most
 """
 
@@ -145,3 +143,13 @@ def _discover_tools() -> None:
 
 
 _discover_tools()
+
+
+# ── Auto-discover skills as MCP prompts --------------------------------------
+
+def _discover_prompts() -> None:
+    from mcp_server.prompts import discover_prompts
+    discover_prompts(mcp)
+
+
+_discover_prompts()

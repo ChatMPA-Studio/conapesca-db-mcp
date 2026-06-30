@@ -12,7 +12,7 @@ from mcp_server.config import USE_SQLITE, SQLITE_PATH
 logger = logging.getLogger("conapesca_mcp.db")
 
 DEFAULT_MAX_ROWS = 5000
-DEFAULT_TIMEOUT  = 20
+DEFAULT_TIMEOUT  = 60
 
 
 # ── Connection helpers -------------------------------------------------------
@@ -28,6 +28,7 @@ def _mysql_connect():
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=DEFAULT_TIMEOUT,
         read_timeout=DEFAULT_TIMEOUT,
+        ssl={"ca": None},
     )
 
 
@@ -62,9 +63,17 @@ def execute_select(
     params: tuple | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
 ) -> list[dict[str, Any]]:
-    """Execute a SELECT and return rows as list-of-dicts, capped at max_rows."""
+    """Execute a SELECT and return rows as list-of-dicts, capped at max_rows.
+
+    Tool code may use either '?' (SQLite style) or '%s' (MySQL style) as
+    placeholders — this function normalises to the correct style for the
+    active backend before executing.
+    """
     from mcp_server.security import validate_sql, enforce_limit
     sql = enforce_limit(validate_sql(sql), max_rows)
+    if not USE_SQLITE:
+        sql = sql.replace("%", "%%")  # escape literal % before pymysql sees them
+        sql = sql.replace("?", "%s")
     conn = get_connection()
     try:
         cur = conn.cursor()

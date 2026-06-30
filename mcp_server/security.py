@@ -4,7 +4,7 @@ SQL security: whitelist tables, deny destructive keywords, cap LIMIT.
 
 import re
 
-ALLOWED_TABLES = {"conapesca_landings"}
+ALLOWED_TABLES = {"conapesca_landings_historical"}
 
 DENY_KEYWORDS = {
     "INSERT", "UPDATE", "DELETE", "REPLACE", "UPSERT",

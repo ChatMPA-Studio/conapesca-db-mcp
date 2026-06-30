@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dev/
+scripts/
+tests/
+*.md
+!README.md
+.gitignore
+.dockerignore
