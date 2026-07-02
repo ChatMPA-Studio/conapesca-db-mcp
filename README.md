@@ -85,7 +85,7 @@ The database tracks its own version in the `db_version_log` table (one row per
 upload event). When a new corrected dataset replaces the current one in AWS,
 follow these steps:
 
-### Carolina's side (data team)
+### Data team (DB side)
 1. Upload the new table to AWS RDS as `conapesca_landings_historical` (replacing the old one).
 2. Insert a row into `db_version_log`:
 ```sql
@@ -93,7 +93,7 @@ INSERT INTO db_version_log (version, table_name, uploaded_at, row_count, notes)
 VALUES ('0.1.0', 'conapesca_landings_historical', NOW(), <row_count>, 'brief description of what changed');
 ```
 
-### Developer's side (MCP update)
+### Developer (MCP side)
 3. The MCP server will start logging a warning at startup:
    ```
    WARNING: DB version mismatch: live DB is at 0.1.0, MCP tested against 0.0.1.
@@ -117,4 +117,4 @@ VALUES ('0.1.0', 'conapesca_landings_historical', NOW(), <row_count>, 'brief des
 
 | DB version | Uploaded | Notes |
 |------------|----------|-------|
-| `0.0.1` | 2026-06-29 | Initial upload — Carolina's cleaned Pacific landings 2001–2026 |
+| `0.0.1` | 2026-06-29 | Initial upload — Pacific landings 2001–2026 |

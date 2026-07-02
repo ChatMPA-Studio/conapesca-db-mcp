@@ -12,7 +12,7 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
-          host: 206.189.163.235
+          host: ${{ secrets.DROPLET_HOST }}
           username: root
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: cd /opt/mcps/conapesca/repo && bash scripts/deploy.sh
