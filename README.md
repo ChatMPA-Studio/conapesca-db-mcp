@@ -30,6 +30,7 @@ data (*avisos de arribo*).
 |------|-------------|
 | `health_check()` | DB connectivity check |
 | `schema_snapshot()` | Column names, types, row count |
+| `get_version()` | MCP version + DB version history from `db_version_log` |
 
 ## Quick start (development)
 
@@ -75,3 +76,45 @@ as the pipeline output.
 
 - `conapesca://data-dictionary` — full column descriptions
 - `conapesca://coverage` — temporal and geographic coverage notes
+
+---
+
+## DB upgrade SOP
+
+The database tracks its own version in the `db_version_log` table (one row per
+upload event). When a new corrected dataset replaces the current one in AWS,
+follow these steps:
+
+### Carolina's side (data team)
+1. Upload the new table to AWS RDS as `conapesca_landings_historical` (replacing the old one).
+2. Insert a row into `db_version_log`:
+```sql
+INSERT INTO db_version_log (version, table_name, uploaded_at, row_count, notes)
+VALUES ('0.1.0', 'conapesca_landings_historical', NOW(), <row_count>, 'brief description of what changed');
+```
+
+### Developer's side (MCP update)
+3. The MCP server will start logging a warning at startup:
+   ```
+   WARNING: DB version mismatch: live DB is at 0.1.0, MCP tested against 0.0.1.
+   Review changelog and bump TESTED_DB_VERSION in config.py.
+   ```
+4. Review whether any tool queries need to change for the new schema (new columns,
+   renamed fields, etc.). Update `tools/` as needed.
+5. In `mcp_server/config.py`, bump `TESTED_DB_VERSION` to match:
+   ```python
+   TESTED_DB_VERSION: str = "0.1.0"
+   ```
+6. In `pyproject.toml`, bump the MCP package version:
+   ```toml
+   version = "0.2.0"
+   ```
+7. Commit and push to `master` → GitHub Actions auto-deploys to the Droplet.
+8. Verify with `get_version()` — `mcp_version` and `tested_db_version` should
+   reflect the new values, and the startup warning should be gone.
+
+### Version history
+
+| DB version | Uploaded | Notes |
+|------------|----------|-------|
+| `0.0.1` | 2026-06-29 | Initial upload — Carolina's cleaned Pacific landings 2001–2026 |
