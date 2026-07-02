@@ -60,6 +60,18 @@ PORT: int         = int(_get("PORT", "8000"))
 MCP_BASE_PATH: str = _get("MCP_BASE_PATH", "/mcp")
 LOG_LEVEL: str    = _get("LOG_LEVEL", "INFO")
 
+# ── Versioning ---------------------------------------------------------------
+
+import importlib.metadata as _meta
+try:
+    MCP_VERSION: str = _meta.version("conapesca-db-mcp")
+except _meta.PackageNotFoundError:
+    MCP_VERSION = "dev"
+
+# Bump this when the MCP is updated for a new DB version.
+# If the live db_version_log differs from this, the server logs a warning at startup.
+TESTED_DB_VERSION: str = "0.0.1"
+
 # ── Logging -----------------------------------------------------------------
 
 import logging

@@ -10,8 +10,9 @@ import pkgutil
 import logging
 
 from fastmcp import FastMCP
-from mcp_server.db import test_connection
+from mcp_server.db import test_connection, get_db_version_log
 from mcp_server.schema import build_schema_snapshot
+from mcp_server.config import MCP_VERSION, TESTED_DB_VERSION
 
 logger = logging.getLogger("conapesca_mcp.server")
 
@@ -28,6 +29,26 @@ def health_check() -> str:
         return json.dumps({"status": "ok", "db": info})
     except Exception as e:
         return json.dumps({"status": "error", "detail": str(e)})
+
+
+@mcp.tool()
+def get_version() -> str:
+    """Return MCP server version and DB version history from db_version_log."""
+    try:
+        rows = get_db_version_log()
+        # Latest entry per table
+        latest_per_table: dict = {}
+        for row in rows:
+            tbl = row.get("table_name")
+            if tbl not in latest_per_table:
+                latest_per_table[tbl] = row
+        return json.dumps({
+            "mcp_version": MCP_VERSION,
+            "tested_db_version": TESTED_DB_VERSION,
+            "db": latest_per_table,
+        }, ensure_ascii=False, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool()

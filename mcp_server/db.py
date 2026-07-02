@@ -96,6 +96,15 @@ def execute_raw(sql: str) -> list[dict[str, Any]]:
         conn.close()
 
 
+def get_db_version_log() -> list[dict[str, Any]]:
+    """Return all rows from db_version_log ordered by uploaded_at DESC.
+    Returns [] if the table does not exist (e.g. SQLite dev mode)."""
+    try:
+        return execute_raw("SELECT * FROM db_version_log ORDER BY uploaded_at DESC")
+    except Exception:
+        return []
+
+
 def test_connection() -> dict[str, str]:
     """Return DB metadata for health checks."""
     if USE_SQLITE:
