@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "chatmpa-studio",
+  "description": "ChatMPA Studio MCP servers and skills for marine science research",
+  "owner": {
+    "name": "ChatMPA Studio",
+    "email": "eduardo@gocmarineprogram.org"
+  },
+  "plugins": [
+    {
+      "name": "conapesca-db-mcp",
+      "description": "CONAPESCA MCP — Mexican fisheries landings data — connects to the MCP server and keeps its skills synced locally every session.",
+      "author": {
+        "name": "ChatMPA Studio"
+      },
+      "category": "data",
+      "source": ".",
+      "homepage": "https://github.com/ChatMPA-Studio/conapesca-db-mcp"
+    }
+  ]
+}

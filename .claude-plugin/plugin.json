@@ -1,0 +1,21 @@
+{
+  "name": "conapesca-db-mcp",
+  "version": "0.1.0",
+  "description": "CONAPESCA MCP — Mexican fisheries landings data — connects to the MCP server and keeps its skills synced locally every session.",
+  "author": {
+    "name": "ChatMPA Studio",
+    "email": "eduardo@gocmarineprogram.org"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/sync_skills.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

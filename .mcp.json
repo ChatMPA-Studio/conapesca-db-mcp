@@ -1,0 +1,9 @@
+{
+  "conapesca-db-mcp": {
+    "type": "http",
+    "url": "http://206.189.163.235/conapesca/",
+    "headers": {
+      "Authorization": "${CONAPESCA_AUTH_HEADER}"
+    }
+  }
+}
