@@ -202,17 +202,22 @@ def register(mcp) -> None:
         especie (nombre_especie, partial match), tipo_aviso, oficina.
 
         group_by=None (default): individual landing records (avisos de arribo),
-        one row per species line per trip. Capped at `limit` rows (max 2000).
+        one row per species line per trip. Includes dias_efectivos and quality
+        flags. Capped at `limit` rows (max 2000).
+
+        group_by="folio": one row per trip (folio_aviso), aggregating
+        peso_desembarcado_kg across all species lines of the same folio.
+        Includes dias_efectivos, quality flags, and effort source. Use this
+        for CPUE computation — it is the correct aggregation unit. No row limit.
 
         group_by="year": annual aggregates — total kg, value, record count per
         year. Use for time-series / trend queries. No row limit.
 
         group_by="estado": aggregates by state — total kg, value, record count
-        per estado, sorted by total_kg desc. Use to find which states land the
-        most of a species. No row limit.
+        per estado, sorted by total_kg desc. No row limit.
 
         group_by="litoral": aggregates by coast — total kg, value, record count
-        per litoral. Use to compare Pacific vs Gulf production. No row limit.
+        per litoral. No row limit.
         """
         conditions, params = [], []
         if year:
@@ -238,6 +243,38 @@ def register(mcp) -> None:
             "ROUND(SUM(valor_pesos_estimado), 0) AS total_valor_mxn, "
             "COUNT(*) AS n_records "
         )
+
+        if group_by == "folio":
+            rows = execute_select(
+                f"SELECT folio_aviso, anio_corte, tipo_aviso, "
+                f"nombre_estado, nombre_oficina_canonico, "
+                f"MAX(dias_efectivos) AS dias_efectivos, "
+                f"MAX(dias_efectivos_fuente) AS dias_efectivos_fuente, "
+                f"MAX(flag_fecha_generica) AS flag_fecha_generica, "
+                f"MAX(flag_dias_efectivos_sospechoso) AS flag_dias_efectivos_sospechoso, "
+                f"MAX(flag_periodo_futuro) AS flag_periodo_futuro, "
+                f"ROUND(SUM(peso_desembarcado_kg), 3) AS peso_desembarcado_kg "
+                f"FROM conapesca_landings_historical {where} "
+                f"GROUP BY folio_aviso, anio_corte, tipo_aviso, "
+                f"nombre_estado, nombre_oficina_canonico "
+                f"ORDER BY anio_corte, folio_aviso",
+                p,
+            )
+            return _json({
+                "by_folio": [dict(r) for r in rows],
+                "meta": {
+                    "filters": {"year": year, "estado": estado, "especie": especie,
+                                "tipo_aviso": tipo_aviso, "oficina": oficina},
+                    "folio_count": len(rows),
+                    "note": (
+                        "One row per trip. dias_efectivos is a trip-level field "
+                        "identical across all species lines of the same folio. "
+                        "Exclude records where flag_fecha_generica=1 or "
+                        "flag_dias_efectivos_sospechoso=1 or dias_efectivos IS NULL "
+                        "before computing CPUE."
+                    ),
+                },
+            })
 
         if group_by == "year":
             rows = execute_select(
@@ -291,7 +328,9 @@ def register(mcp) -> None:
             f"SELECT anio_corte, fecha_aviso, tipo_aviso, folio_aviso, "
             f"nombre_estado, nombre_oficina_canonico, nombre_sitio_desembarque_canonico, "
             f"unidad_economica, nombre_especie, nombre_cientifico, "
-            f"peso_desembarcado_kg, valor_pesos_estimado, tipo_pesca_canonico "
+            f"peso_desembarcado_kg, valor_pesos_estimado, tipo_pesca_canonico, "
+            f"dias_efectivos, dias_efectivos_fuente, "
+            f"flag_fecha_generica, flag_dias_efectivos_sospechoso, flag_periodo_futuro "
             f"FROM conapesca_landings_historical {where} "
             f"ORDER BY fecha_aviso DESC",
             p, max_rows=safe_limit,
