@@ -23,23 +23,6 @@ mcp = FastMCP("CONAPESCA Landings")
 # ── Core tools (defined inline) ---------------------------------------------
 
 @mcp.tool()
-def get_version() -> str:
-    """Return the current version of the CONAPESCA MCP server and database coverage."""
-    try:
-        version = importlib.metadata.version("conapesca-db-mcp")
-    except importlib.metadata.PackageNotFoundError:
-        version = "unknown"
-    return json.dumps({
-        "server_version": version,
-        "database": "conapesca_landings_historical",
-        "coverage": {
-            "years": "2001–2026",
-            "litorales": ["PACIFICO", "GOLFO"],
-        },
-    })
-
-
-@mcp.tool()
 def health_check() -> str:
     """Check database connectivity and return server status."""
     try:
