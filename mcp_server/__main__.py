@@ -24,4 +24,4 @@ try:
 except Exception as _e:
     logging.getLogger("conapesca_mcp.version").warning("Could not check DB version: %s", _e)
 
-mcp.run(transport="sse", host="0.0.0.0", port=PORT)
+mcp.run(transport="http", host="0.0.0.0", port=PORT, path=MCP_BASE_PATH)
