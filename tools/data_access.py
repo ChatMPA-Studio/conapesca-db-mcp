@@ -347,6 +347,21 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
+    def record_count() -> str:
+        """
+        Return total record count and year range in the CONAPESCA landings
+        database. Fast single-row query — use this instead of get_landings
+        when only the total size or date range is needed.
+        """
+        rows = execute_select(
+            "SELECT COUNT(*) AS total_records, "
+            "MIN(anio_corte) AS first_year, MAX(anio_corte) AS last_year "
+            "FROM conapesca_landings_historical",
+        )
+        r = dict(rows[0]) if rows else {}
+        return _json(r)
+
+    @mcp.tool()
     def get_offices(estado: str | None = None) -> str:
         """
         List fishing offices (oficinas CONAPESCA) with their state and
