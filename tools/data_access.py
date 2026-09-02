@@ -199,8 +199,9 @@ def register(mcp) -> None:
     ) -> str:
         """
         Return landing data filtered by any combination of year, estado,
-        especie (nombre_especie, partial match), tipo_aviso, oficina (exact
-        match — use get_offices() to find the exact nombre_oficina value).
+        especie (partial match against nombre_especie OR nombre_cientifico),
+        tipo_aviso, oficina (exact match — use get_offices() to find the exact
+        nombre_oficina value).
 
         group_by=None (default): individual landing records (avisos de arribo),
         one row per species line per trip. Includes dias_efectivos and quality
@@ -228,8 +229,8 @@ def register(mcp) -> None:
             conditions.append("nombre_estado = ?")
             params.append(estado.upper())
         if especie:
-            conditions.append("nombre_especie LIKE ?")
-            params.append(f"%{especie.upper()}%")
+            conditions.append("(nombre_especie LIKE ? OR nombre_cientifico LIKE ?)")
+            params.extend([f"%{especie.upper()}%", f"%{especie.upper()}%"])
         if tipo_aviso:
             conditions.append("tipo_aviso = ?")
             params.append(tipo_aviso.upper())
