@@ -214,10 +214,12 @@ def register(mcp) -> None:
         year             : exact year match (use this OR year_from/year_to, not both)
         year_from/year_to: inclusive year range (e.g. year_from=2015, year_to=2024)
         estado           : exact match on nombre_estado (uppercase)
-        oficina          : partial match on nombre_oficina (uppercase)
+        oficina          : exact match on nombre_oficina (uppercase) — use
+                           get_offices() to find the exact nombre_oficina value.
         tipo_aviso       : exact match — MAYORES | MENORES | COSECHA
-        especie          : partial match on nombre_especie (legacy; use
-                           nombre_principal or nombre_cientifico_canonico instead)
+        especie          : partial match on nombre_especie OR nombre_cientifico
+                           (legacy; use nombre_principal or
+                           nombre_cientifico_canonico instead)
         nombre_principal : exact match on nombre_principal — resource group level
                            (e.g. "JUREL", "CAMARON", "OSTION")
         nombre_cientifico_canonico: exact match on nombre_cientifico_canonico —
@@ -266,8 +268,8 @@ def register(mcp) -> None:
             conditions.append("nombre_estado = ?")
             params.append(estado.upper())
         if especie:
-            conditions.append("nombre_especie LIKE ?")
-            params.append(f"%{especie.upper()}%")
+            conditions.append("(nombre_especie LIKE ? OR nombre_cientifico LIKE ?)")
+            params.extend([f"%{especie.upper()}%", f"%{especie.upper()}%"])
         if nombre_principal:
             conditions.append("nombre_principal = ?")
             params.append(nombre_principal.upper())
@@ -278,9 +280,8 @@ def register(mcp) -> None:
             conditions.append("tipo_aviso = ?")
             params.append(tipo_aviso.upper())
         if oficina:
-            conditions.append("nombre_oficina LIKE ?")
-            params.append(f"%{oficina.upper()}%")
-
+            conditions.append("nombre_oficina = ?")
+            params.append(oficina.upper())
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         p = tuple(params) or None
 
@@ -440,6 +441,21 @@ def register(mcp) -> None:
                 "limit": safe_limit,
             },
         })
+
+    @mcp.tool()
+    def record_count() -> str:
+        """
+        Return total record count and year range in the CONAPESCA landings
+        database. Fast single-row query — use this instead of get_landings
+        when only the total size or date range is needed.
+        """
+        rows = execute_select(
+            "SELECT COUNT(*) AS total_records, "
+            "MIN(anio_corte) AS first_year, MAX(anio_corte) AS last_year "
+            "FROM conapesca_landings_historical",
+        )
+        r = dict(rows[0]) if rows else {}
+        return _json(r)
 
     @mcp.tool()
     def get_offices(estado: str | None = None) -> str:
