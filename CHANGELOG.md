@@ -12,8 +12,10 @@
     - `"office_year_fleet"` — annual totals per `oficina × anio_corte × tipo_aviso`
       for all offices matching the filters. No row limit.
       Used by `conapesca-national-ranking` (compare one office vs national universe).
-  - `group_by="folio"` now includes `nombre_principal` and `nombre_cientifico_canonico`
-    in the SELECT and GROUP BY — consistent with new filter params.
+  - `group_by="folio"` keeps one row per trip (`folio_aviso`). `nombre_principal` and
+    `nombre_cientifico_canonico` filter in the WHERE (server-side) but are not added to
+    the SELECT or GROUP BY: grouping by species split multi-species trips into several
+    rows and miscounted trips in `conapesca-cpue` (see chatmpa-skills#16).
   - Default (no group_by) now includes `nombre_principal` and `nombre_cientifico_canonico`
     in the SELECT columns.
   - All modes share a unified `active_filters` dict in `meta` for consistency.

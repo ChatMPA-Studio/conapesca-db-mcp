@@ -306,7 +306,6 @@ def register(mcp) -> None:
             rows = execute_select(
                 f"SELECT folio_aviso, anio_corte, tipo_aviso, "
                 f"nombre_estado, nombre_oficina, "
-                f"nombre_principal, nombre_cientifico_canonico, "
                 f"MAX(dias_efectivos) AS dias_efectivos, "
                 f"MAX(dias_efectivos_fuente) AS dias_efectivos_fuente, "
                 f"MAX(flag_fecha_generica) AS flag_fecha_generica, "
@@ -315,8 +314,7 @@ def register(mcp) -> None:
                 f"ROUND(SUM(peso_desembarcado_kg), 3) AS peso_desembarcado_kg "
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY folio_aviso, anio_corte, tipo_aviso, "
-                f"nombre_estado, nombre_oficina, "
-                f"nombre_principal, nombre_cientifico_canonico "
+                f"nombre_estado, nombre_oficina "
                 f"ORDER BY anio_corte, folio_aviso",
                 p,
             )
