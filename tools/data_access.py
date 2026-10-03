@@ -53,11 +53,16 @@ def register(mcp) -> None:
         top_n: int | None = None,
     ) -> str:
         """
-        List species (nombre_especie + nombre_cientifico) with total landed
+        List species (nombre_especie + nombre_cientifico_canonico) with total landed
         weight (kg), estimated value (MXN) and record count.
         Filters: year, estado, tipo_aviso (MAYORES/MENORES/COSECHA).
         top_n: if provided, return only the top N species by landed weight
         (max 500); if omitted, return all matching combinations.
+
+        IMPORTANT: Always provide at least one filter (year, estado, or tipo_aviso).
+        Queries without any filter scan 12+ million rows and will likely time out.
+        If the user does not specify a year or state, ask them to provide one before
+        calling this tool.
         """
         conditions, params = [], []
         if year:
@@ -72,17 +77,17 @@ def register(mcp) -> None:
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         max_rows = min(max(1, top_n), 500) if top_n is not None else 5000
         rows = execute_select(
-            f"SELECT nombre_especie, nombre_cientifico, "
+            f"SELECT nombre_especie, nombre_cientifico_canonico, "
             f"ROUND(SUM(peso_desembarcado_kg), 1) AS total_kg, "
             f"ROUND(SUM(valor_pesos_estimado), 0) AS total_valor_mxn, "
             f"COUNT(*) AS n_records "
             f"FROM conapesca_landings_historical {where} "
-            f"GROUP BY nombre_especie, nombre_cientifico "
+            f"GROUP BY nombre_especie, nombre_cientifico_canonico "
             f"ORDER BY total_kg DESC",
             tuple(params) or None,
             max_rows=max_rows,
         )
-        result = [{**dict(r), "tipo": _tipo(r.get("nombre_cientifico"))} for r in rows]
+        result = [{**dict(r), "tipo": _tipo(r.get("nombre_cientifico_canonico"))} for r in rows]
         return _json({
             "species": result,
             "meta": {
@@ -107,16 +112,16 @@ def register(mcp) -> None:
         (nombre_cientifico = ND or empty) and how many records they represent.
         Use this tool to answer any question about species diversity or richness.
         """
-        # One row per unique nombre_cientifico with representative taxonomy
+        # One row per unique nombre_cientifico_canonico with representative taxonomy
         identified_rows = execute_select(
-            "SELECT nombre_cientifico, "
+            "SELECT nombre_cientifico_canonico, "
             "MAX(genus) AS genus, MAX(family) AS family, MAX(`order`) AS `order`, "
             "MAX(class) AS class, MAX(phylum) AS phylum, MAX(kingdom) AS kingdom "
             "FROM conapesca_landings_historical "
-            "WHERE nombre_cientifico IS NOT NULL "
-            "AND TRIM(nombre_cientifico) != '' "
-            "AND UPPER(TRIM(nombre_cientifico)) != 'ND' "
-            "GROUP BY nombre_cientifico",
+            "WHERE nombre_cientifico_canonico IS NOT NULL "
+            "AND TRIM(nombre_cientifico_canonico) != '' "
+            "AND UPPER(TRIM(nombre_cientifico_canonico)) != 'ND' "
+            "GROUP BY nombre_cientifico_canonico",
             max_rows=5000,
         )
 
@@ -125,7 +130,7 @@ def register(mcp) -> None:
             "order": [], "class": [], "phylum": [], "kingdom": [], "unclassified": [],
         }
         for row in identified_rows:
-            nc = (row.get("nombre_cientifico") or "").strip()
+            nc = (row.get("nombre_cientifico_canonico") or "").strip()
             if not nc:
                 continue
             if " " in nc:
@@ -153,18 +158,18 @@ def register(mcp) -> None:
         nd_rows = execute_select(
             "SELECT DISTINCT nombre_especie "
             "FROM conapesca_landings_historical "
-            "WHERE nombre_cientifico IS NULL "
-            "OR TRIM(nombre_cientifico) = '' "
-            "OR UPPER(TRIM(nombre_cientifico)) = 'ND'",
+            "WHERE nombre_cientifico_canonico IS NULL "
+            "OR TRIM(nombre_cientifico_canonico) = '' "
+            "OR UPPER(TRIM(nombre_cientifico_canonico)) = 'ND'",
             max_rows=5000,
         )
         nd_especies = sorted(r["nombre_especie"] for r in nd_rows if r.get("nombre_especie"))
 
         nd_record_rows = execute_select(
             "SELECT COUNT(*) AS n FROM conapesca_landings_historical "
-            "WHERE nombre_cientifico IS NULL "
-            "OR TRIM(nombre_cientifico) = '' "
-            "OR UPPER(TRIM(nombre_cientifico)) = 'ND'"
+            "WHERE nombre_cientifico_canonico IS NULL "
+            "OR TRIM(nombre_cientifico_canonico) = '' "
+            "OR UPPER(TRIM(nombre_cientifico_canonico)) = 'ND'"
         )
         nd_records = nd_record_rows[0]["n"] if nd_record_rows else 0
 
@@ -172,13 +177,13 @@ def register(mcp) -> None:
 
         return _json({
             "summary": {
-                "total_unique_nombre_cientifico": total,
+                "total_unique_nombre_cientifico_canonico": total,
                 "by_taxonomic_level": {k: len(v) for k, v in levels.items() if v},
             },
             "by_level": {k: sorted(v) for k, v in levels.items() if v},
             "unidentified": {
                 "note": (
-                    "These nombre_especie values have nombre_cientifico = ND or empty "
+                    "These nombre_especie values have nombre_cientifico_canonico = ND or empty "
                     "and are not yet taxonomically identified."
                 ),
                 "n_unique_nombre_especie": len(nd_especies),
@@ -190,47 +195,87 @@ def register(mcp) -> None:
     @mcp.tool()
     def get_landings(
         year: int | None = None,
+        year_from: int | None = None,
+        year_to: int | None = None,
         estado: str | None = None,
         especie: str | None = None,
+        nombre_principal: str | None = None,
+        nombre_cientifico_canonico: str | None = None,
         tipo_aviso: str | None = None,
         oficina: str | None = None,
         limit: int = 500,
         group_by: str | None = None,
     ) -> str:
         """
-        Return landing data filtered by any combination of year, estado,
-        especie (partial match against nombre_especie OR nombre_cientifico),
-        tipo_aviso, oficina (exact match — use get_offices() to find the exact
-        nombre_oficina value).
+        Return landing data filtered by any combination of year/range, estado,
+        especie, nombre_principal, nombre_cientifico_canonico, tipo_aviso, oficina.
 
-        group_by=None (default): individual landing records (avisos de arribo),
-        one row per species line per trip. Includes dias_efectivos and quality
-        flags. Capped at `limit` rows (max 2000).
+        ── FILTERS ──────────────────────────────────────────────────────────────
+        year             : exact year match (use this OR year_from/year_to, not both)
+        year_from/year_to: inclusive year range (e.g. year_from=2015, year_to=2024)
+        estado           : exact match on nombre_estado (uppercase)
+        oficina          : exact match on nombre_oficina (uppercase) — use
+                           get_offices() to find the exact nombre_oficina value.
+        tipo_aviso       : exact match — MAYORES | MENORES | COSECHA
+        especie          : partial match on nombre_especie OR nombre_cientifico
+                           (legacy; use nombre_principal or
+                           nombre_cientifico_canonico instead)
+        nombre_principal : exact match on nombre_principal — resource group level
+                           (e.g. "JUREL", "CAMARON", "OSTION")
+        nombre_cientifico_canonico: exact match on nombre_cientifico_canonico —
+                           species level (e.g. "Seriola lalandi").
+                           Mutually exclusive with nombre_principal.
 
-        group_by="folio": one row per trip (folio_aviso), aggregating
-        peso_desembarcado_kg across all species lines of the same folio.
-        Includes dias_efectivos, quality flags, and effort source. Use this
-        for CPUE computation — it is the correct aggregation unit. No row limit.
+        ── GROUP_BY MODES ───────────────────────────────────────────────────────
+        None (default)   : individual records, capped at `limit` rows (max 2000).
+                           Includes quality flags and effort fields.
 
-        group_by="year": annual aggregates — total kg, value, record count per
-        year. Use for time-series / trend queries. No row limit.
+        "folio"          : one row per fishing trip (folio_aviso), summing
+                           peso_desembarcado_kg across species lines. Includes
+                           dias_efectivos and quality flags. No row limit.
+                           → Use for CPUE computation.
 
-        group_by="estado": aggregates by state — total kg, value, record count
-        per estado, sorted by total_kg desc. No row limit.
+        "year"           : annual totals — total_kg, total_valor_mxn, n_records
+                           per year. No row limit.
 
-        group_by="litoral": aggregates by coast — total kg, value, record count
-        per litoral. No row limit.
+        "year_fleet"     : annual totals per year × tipo_aviso (MAYORES/MENORES/
+                           COSECHA). No row limit.
+                           → Use for timeseries and comparative-summary skills.
+
+        "office_year_fleet": annual totals per oficina × year × tipo_aviso for
+                           ALL offices matching the filters. No row limit.
+                           → Use for national ranking computation (compare one
+                           office against the full national universe).
+
+        "estado"         : totals per estado. No row limit.
+        "litoral"        : totals per litoral. No row limit.
         """
         conditions, params = [], []
+
+        # Year filters — exact OR range (not both)
         if year:
             conditions.append("anio_corte = ?")
             params.append(year)
+        else:
+            if year_from:
+                conditions.append("anio_corte >= ?")
+                params.append(year_from)
+            if year_to:
+                conditions.append("anio_corte <= ?")
+                params.append(year_to)
+
         if estado:
             conditions.append("nombre_estado = ?")
             params.append(estado.upper())
         if especie:
             conditions.append("(nombre_especie LIKE ? OR nombre_cientifico LIKE ?)")
             params.extend([f"%{especie.upper()}%", f"%{especie.upper()}%"])
+        if nombre_principal:
+            conditions.append("nombre_principal = ?")
+            params.append(nombre_principal.upper())
+        if nombre_cientifico_canonico:
+            conditions.append("nombre_cientifico_canonico = ?")
+            params.append(nombre_cientifico_canonico)
         if tipo_aviso:
             conditions.append("tipo_aviso = ?")
             params.append(tipo_aviso.upper())
@@ -240,12 +285,23 @@ def register(mcp) -> None:
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         p = tuple(params) or None
 
-        agg_select = (
+        # Shared metrics used by all aggregated modes
+        agg_metrics = (
             "ROUND(SUM(peso_desembarcado_kg), 1) AS total_kg, "
             "ROUND(SUM(valor_pesos_estimado), 0) AS total_valor_mxn, "
-            "COUNT(*) AS n_records "
+            "COUNT(*) AS n_records"
         )
 
+        # Active filters dict — included in all meta blocks
+        active_filters = {
+            "year": year, "year_from": year_from, "year_to": year_to,
+            "estado": estado, "especie": especie,
+            "nombre_principal": nombre_principal,
+            "nombre_cientifico_canonico": nombre_cientifico_canonico,
+            "tipo_aviso": tipo_aviso, "oficina": oficina,
+        }
+
+        # ── group_by = "folio" ────────────────────────────────────────────────
         if group_by == "folio":
             rows = execute_select(
                 f"SELECT folio_aviso, anio_corte, tipo_aviso, "
@@ -265,71 +321,109 @@ def register(mcp) -> None:
             return _json({
                 "by_folio": [dict(r) for r in rows],
                 "meta": {
-                    "filters": {"year": year, "estado": estado, "especie": especie,
-                                "tipo_aviso": tipo_aviso, "oficina": oficina},
+                    "filters": active_filters,
                     "folio_count": len(rows),
                     "note": (
-                        "One row per trip. dias_efectivos is a trip-level field "
-                        "identical across all species lines of the same folio. "
-                        "Exclude records where flag_fecha_generica=1 or "
-                        "flag_dias_efectivos_sospechoso=1 or dias_efectivos IS NULL "
+                        "One row per trip. dias_efectivos is trip-level — do NOT sum "
+                        "across rows of the same folio. Exclude flag_fecha_generica=1 "
+                        "or flag_dias_efectivos_sospechoso=1 or dias_efectivos IS NULL "
                         "before computing CPUE."
                     ),
                 },
             })
 
+        # ── group_by = "year" ─────────────────────────────────────────────────
         if group_by == "year":
             rows = execute_select(
-                f"SELECT anio_corte, {agg_select}"
+                f"SELECT anio_corte, {agg_metrics} "
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY anio_corte ORDER BY anio_corte",
                 p, max_rows=100,
             )
             return _json({
                 "annual_trend": [dict(r) for r in rows],
+                "meta": {"filters": active_filters, "year_count": len(rows)},
+            })
+
+        # ── group_by = "year_fleet" ───────────────────────────────────────────
+        if group_by == "year_fleet":
+            rows = execute_select(
+                f"SELECT anio_corte, tipo_aviso, {agg_metrics} "
+                f"FROM conapesca_landings_historical {where} "
+                f"GROUP BY anio_corte, tipo_aviso "
+                f"ORDER BY anio_corte, tipo_aviso",
+                p,
+            )
+            return _json({
+                "by_year_fleet": [dict(r) for r in rows],
                 "meta": {
-                    "filters": {"year": year, "estado": estado, "especie": especie,
-                                "tipo_aviso": tipo_aviso, "oficina": oficina},
-                    "year_count": len(rows),
+                    "filters": active_filters,
+                    "row_count": len(rows),
+                    "note": (
+                        "Annual totals disaggregated by fleet type (tipo_aviso). "
+                        "Use for timeseries and comparative-summary skills."
+                    ),
                 },
             })
 
+        # ── group_by = "office_year_fleet" ────────────────────────────────────
+        if group_by == "office_year_fleet":
+            rows = execute_select(
+                f"SELECT nombre_oficina, nombre_estado, anio_corte, tipo_aviso, "
+                f"{agg_metrics} "
+                f"FROM conapesca_landings_historical {where} "
+                f"GROUP BY nombre_oficina, nombre_estado, anio_corte, tipo_aviso "
+                f"ORDER BY anio_corte, nombre_estado, nombre_oficina, tipo_aviso",
+                p,
+            )
+            return _json({
+                "by_office_year_fleet": [dict(r) for r in rows],
+                "meta": {
+                    "filters": active_filters,
+                    "row_count": len(rows),
+                    "office_count": len({r["nombre_oficina"] for r in rows}),
+                    "note": (
+                        "Annual totals per office × fleet type. "
+                        "Use for national ranking — includes all offices matching "
+                        "the filters so the target office can be compared against "
+                        "the full national universe."
+                    ),
+                },
+            })
+
+        # ── group_by = "estado" ───────────────────────────────────────────────
         if group_by == "estado":
             rows = execute_select(
-                f"SELECT nombre_estado, {agg_select}"
+                f"SELECT nombre_estado, {agg_metrics} "
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY nombre_estado ORDER BY total_kg DESC",
                 p, max_rows=50,
             )
             return _json({
                 "by_estado": [dict(r) for r in rows],
-                "meta": {
-                    "filters": {"year": year, "estado": estado, "especie": especie,
-                                "tipo_aviso": tipo_aviso, "oficina": oficina},
-                    "estado_count": len(rows),
-                },
+                "meta": {"filters": active_filters, "estado_count": len(rows)},
             })
 
+        # ── group_by = "litoral" ──────────────────────────────────────────────
         if group_by == "litoral":
             rows = execute_select(
-                f"SELECT litoral, {agg_select}"
+                f"SELECT litoral, {agg_metrics} "
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY litoral ORDER BY total_kg DESC",
                 p, max_rows=10,
             )
             return _json({
                 "by_litoral": [dict(r) for r in rows],
-                "meta": {
-                    "filters": {"year": year, "estado": estado, "especie": especie,
-                                "tipo_aviso": tipo_aviso, "oficina": oficina},
-                },
+                "meta": {"filters": active_filters},
             })
 
+        # ── default: individual records (capped) ──────────────────────────────
         safe_limit = min(max(1, limit), 2000)
         rows = execute_select(
             f"SELECT anio_corte, fecha_aviso, tipo_aviso, folio_aviso, "
-            f"nombre_estado, nombre_oficina, nombre_sitio_desembarque, "
-            f"unidad_economica, nombre_especie, nombre_cientifico, "
+            f"litoral, nombre_estado, nombre_oficina, nombre_sitio_desembarque, "
+            f"unidad_economica, nombre_principal, nombre_especie, "
+            f"nombre_cientifico, nombre_cientifico_canonico, "
             f"peso_desembarcado_kg, valor_pesos_estimado, tipo_pesca_canonico, "
             f"dias_efectivos, dias_efectivos_fuente, "
             f"flag_fecha_generica, flag_dias_efectivos_sospechoso, flag_periodo_futuro "
@@ -338,10 +432,9 @@ def register(mcp) -> None:
             p, max_rows=safe_limit,
         )
         return _json({
-            "landings": [{**dict(r), "tipo": _tipo(r.get("nombre_cientifico"))} for r in rows],
+            "landings": [{**dict(r), "tipo": _tipo(r.get("nombre_cientifico_canonico"))} for r in rows],
             "meta": {
-                "filters": {"year": year, "estado": estado, "especie": especie,
-                            "tipo_aviso": tipo_aviso, "oficina": oficina},
+                "filters": active_filters,
                 "row_count": len(rows),
                 "limit": safe_limit,
             },
@@ -391,18 +484,43 @@ def register(mcp) -> None:
         """
         Return the taxonomic classification for a species name
         (kingdom → genus) plus FishBase traits if available.
+        Searches nombre_cientifico_canonico first; falls back to nombre_especie
+        if no results are found.
         """
-        rows = execute_select(
-            "SELECT DISTINCT nombre_especie, nombre_cientifico, "
-            "kingdom, phylum, class, `order`, family, genus, worms_id, "
-            "spec_code_fishbase, fishbase_database, "
-            "k, loo, lmax, tmax, wmax, trophic_level, tipo_pesca_canonico "
+        _q = f"%{especie.upper()}%"
+        _base = (
+            "SELECT nombre_cientifico_canonico, "
+            "GROUP_CONCAT(DISTINCT nombre_especie) AS nombres_especie_conapesca, "
+            "MAX(kingdom) AS kingdom, MAX(phylum) AS phylum, "
+            "MAX(class) AS class, MAX(`order`) AS `order`, "
+            "MAX(family) AS family, MAX(genus) AS genus, "
+            "MAX(worms_id) AS worms_id, "
+            "MAX(spec_code_fishbase) AS spec_code_fishbase, "
+            "MAX(fishbase_database) AS fishbase_database, "
+            "MAX(k) AS k, MAX(loo) AS loo, MAX(lmax) AS lmax, "
+            "MAX(tmax) AS tmax, MAX(wmax) AS wmax, "
+            "MAX(trophic_level) AS trophic_level, "
+            "MAX(tipo_pesca_canonico) AS tipo_pesca_canonico "
             "FROM conapesca_landings_historical "
-            "WHERE nombre_especie LIKE ? OR nombre_cientifico LIKE ? "
-            "LIMIT 10",
-            (f"%{especie.upper()}%", f"%{especie.upper()}%"),
+            "WHERE {where} "
+            "GROUP BY nombre_cientifico_canonico "
+            "ORDER BY nombre_cientifico_canonico "
+            "LIMIT 10"
         )
+        rows = execute_select(
+            _base.format(where="nombre_cientifico_canonico LIKE ?"), (_q,)
+        )
+        fallback_used = False
+        if not rows:
+            rows = execute_select(
+                _base.format(where="nombre_especie LIKE ?"), (_q,)
+            )
+            fallback_used = True
         return _json({
             "taxonomy": [dict(r) for r in rows],
-            "meta": {"query": especie, "count": len(rows)},
+            "meta": {
+                "query": especie,
+                "count": len(rows),
+                "search_field": "nombre_especie" if fallback_used else "nombre_cientifico_canonico",
+            },
         })
