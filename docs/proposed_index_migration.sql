@@ -1,5 +1,11 @@
 -- Propuesta de migración de índices para conapesca_landings_historical
 -- ============================================================================
+-- NOTA: para ejecutar esto usar scripts/migrate_indexes.py (ver
+-- docs/index_migration_runbook.md), no este archivo a mano. Probado contra
+-- MySQL 8.0: el FULLTEXT (punto 1) FALLA con LOCK=NONE (error 1846) y los
+-- índices existentes usan prefijos (ej. nombre_estado(19)) que este archivo
+-- no replica; el script maneja ambas cosas. Este archivo queda como referencia.
+-- ============================================================================
 -- NO EJECUTAR AUTOMÁTICAMENTE. Este archivo NO corrió contra ninguna base —
 -- es una propuesta lista para revisar y correr statement por statement,
 -- manualmente, cuando el equipo decida. Generado a partir de evidencia REAL
