@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Timeout root cause: every query opened and closed a brand-new MySQL/TLS
+  connection (`mcp_server/db.py`) — replaced with a process-wide `DBUtils`
+  `PooledDB` pool (`DB_POOL_SIZE`/`DB_POOL_MAX_OVERFLOW` env vars).
+- Timeout root cause: all tools were sync functions, which FastMCP 2.x runs
+  directly on the event loop (no thread offload) — a single slow query froze
+  the entire server for every other concurrent call, including its own
+  `health_check()`. All tools in `mcp_server/server.py`, `tools/data_access.py`
+  and `tools/reporting.py` are now `async def` and hand their blocking DB call
+  to a worker thread via `asyncio.to_thread`. Verified empirically (real HTTP
+  requests against Docker containers built from before/after this change,
+  2M-row SQLite dataset): the fast call went from 6.8s (blocked behind the
+  slow one) to 8ms (unaffected by it).
+- `get_landings(group_by=...)` docstrings falsely claimed some branches had
+  "No row limit" — every query is actually capped by `security.enforce_limit`
+  (default 5000 rows), silently, with no indication in the response. Fixed
+  the docstrings and added a `meta.truncated` boolean to every branch
+  (fetches one row past the cap to tell "exactly at the cap" apart from
+  "more rows exist beyond it").
+
+### Added
+- `mcp_server/cache.py` — in-memory TTL cache (default 300s, `CACHE_TTL_SECONDS`)
+  for near-static tools that used to hit the DB on every call:
+  `get_estados`, `get_offices`, `species_count`, `get_version`, `schema_snapshot`.
+- `tests/` — no automated tests existed before this pass. Added
+  `test_data_access.py`, `test_reporting.py` (in-memory `fastmcp.Client`
+  integration tests via a SQLite fixture DB), `test_db_pool.py` (pooling
+  unit tests, MySQL faked at the `pymysql`/`dbutils` boundary), and
+  `test_concurrency.py` (the regression test for the event-loop-blocking
+  fix — verified it actually fails if `asyncio.to_thread` is reverted).
+- `docs/rds_index_recommendations.md` — proposed indexes for the production
+  RDS table, derived from the actual query shapes in the tool code. Not
+  applied — this container has no visibility into the live RDS's current
+  indexes; needs verification by whoever owns the database.
+
 ## [0.2.0] — 2026-06-29
 
 ### Added
