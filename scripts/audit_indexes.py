@@ -1,0 +1,170 @@
+"""
+scripts/audit_indexes.py
+-------------------------
+Read-only audit of conapesca_landings_historical's real index state and
+query plans, per docs/rds_index_recommendations.md Section 1. Runs
+SHOW INDEX, an information_schema size check, and EXPLAIN for every
+documented query shape — no CREATE INDEX / ALTER TABLE, nothing is written.
+
+Requires USE_SQLITE=false and CONAPESCA_DB_* (or DATABASE_URL) set in .env,
+pointing at the MySQL instance to audit.
+
+Usage:
+    python scripts/audit_indexes.py [--out PATH]   (default: docs/index_audit_output.md)
+"""
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from mcp_server import config  # noqa: E402  (triggers load_dotenv + validation)
+
+if config.USE_SQLITE:
+    print("USE_SQLITE=true in .env — this script audits the real MySQL instance. "
+          "Set USE_SQLITE=false and the CONAPESCA_DB_* vars first.")
+    sys.exit(1)
+
+import pymysql  # noqa: E402
+
+TABLE = "conapesca_landings_historical"
+
+QUERIES: list[tuple[str, str]] = [
+    ("get_estados(year=2023)", """
+        EXPLAIN SELECT DISTINCT nombre_estado FROM conapesca_landings_historical
+        WHERE anio_corte = 2023
+        ORDER BY nombre_estado
+    """),
+    ("get_species(year=2023, estado='SINALOA', tipo_aviso='MAYORES')", """
+        EXPLAIN SELECT nombre_especie, nombre_cientifico,
+          ROUND(SUM(peso_desembarcado_kg), 1) AS total_kg,
+          ROUND(SUM(valor_pesos_estimado), 0) AS total_valor_mxn,
+          COUNT(*) AS n_records
+        FROM conapesca_landings_historical
+        WHERE anio_corte = 2023 AND nombre_estado = 'SINALOA' AND tipo_aviso = 'MAYORES'
+        GROUP BY nombre_especie, nombre_cientifico
+        ORDER BY total_kg DESC
+    """),
+    ("get_landings() default, especie filter", """
+        EXPLAIN SELECT anio_corte, fecha_aviso, tipo_aviso, folio_aviso,
+          nombre_estado, nombre_oficina, nombre_sitio_desembarque,
+          unidad_economica, nombre_especie, nombre_cientifico,
+          peso_desembarcado_kg, valor_pesos_estimado, tipo_pesca_canonico,
+          dias_efectivos, dias_efectivos_fuente,
+          flag_fecha_generica, flag_dias_efectivos_sospechoso, flag_periodo_futuro
+        FROM conapesca_landings_historical
+        WHERE anio_corte = 2023 AND nombre_estado = 'SINALOA'
+          AND (nombre_especie LIKE '%CAMARON%' OR nombre_cientifico LIKE '%CAMARON%')
+        ORDER BY fecha_aviso DESC
+        LIMIT 500
+    """),
+    ("get_landings(group_by='folio')", """
+        EXPLAIN SELECT folio_aviso, anio_corte, tipo_aviso,
+          nombre_estado, nombre_oficina,
+          MAX(dias_efectivos) AS dias_efectivos,
+          ROUND(SUM(peso_desembarcado_kg), 3) AS peso_desembarcado_kg
+        FROM conapesca_landings_historical
+        WHERE anio_corte = 2023
+        GROUP BY folio_aviso, anio_corte, tipo_aviso, nombre_estado, nombre_oficina
+        ORDER BY anio_corte, folio_aviso
+    """),
+    ("get_taxonomy('camaron') — the unindexable leading-wildcard LIKE", """
+        EXPLAIN SELECT DISTINCT nombre_especie, nombre_cientifico,
+          kingdom, phylum, class, `order`, family, genus, worms_id
+        FROM conapesca_landings_historical
+        WHERE nombre_especie LIKE '%CAMARON%' OR nombre_cientifico LIKE '%CAMARON%'
+        LIMIT 10
+    """),
+    ("landings_by_year() no filters", """
+        EXPLAIN SELECT anio_corte,
+          ROUND(SUM(peso_desembarcado_kg), 1) AS total_kg,
+          ROUND(SUM(valor_pesos_estimado), 0) AS total_valor_mxn,
+          COUNT(*) AS n_records
+        FROM conapesca_landings_historical
+        GROUP BY anio_corte ORDER BY anio_corte
+    """),
+    ("get_row_count (unconditional, no index can help)", """
+        EXPLAIN SELECT COUNT(*) AS n FROM conapesca_landings_historical
+    """),
+    ("get_coverage (unconditional, no index can help)", """
+        EXPLAIN SELECT MIN(anio_corte) AS year_min, MAX(anio_corte) AS year_max,
+          COUNT(DISTINCT nombre_estado) AS unique_estados,
+          COUNT(DISTINCT tipo_aviso) AS unique_fleet_types
+        FROM conapesca_landings_historical
+    """),
+]
+
+
+def _connect():
+    return pymysql.connect(
+        host=config.DB_HOST, port=config.DB_PORT,
+        user=config.DB_USER, password=config.DB_PASSWORD,
+        database=config.DB_NAME,
+        cursorclass=pymysql.cursors.DictCursor,
+    )
+
+
+def _render_rows(rows: list[dict]) -> str:
+    if not rows:
+        return "(no rows)"
+    cols = list(rows[0].keys())
+    lines = ["| " + " | ".join(cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
+    for r in rows:
+        lines.append("| " + " | ".join(str(r[c]) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", default="docs/index_audit_output.md")
+    args = parser.parse_args()
+
+    out_lines: list[str] = [
+        f"# Index audit output — {config.DB_HOST}/{config.DB_NAME}",
+        "",
+        "Read-only. Generated by scripts/audit_indexes.py, see docs/rds_index_recommendations.md Section 1.",
+        "",
+    ]
+
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            print(f"Connected to {config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}")
+
+            out_lines.append("## Current indexes (SHOW INDEX)\n")
+            cur.execute(f"SHOW INDEX FROM {TABLE}")
+            out_lines.append(_render_rows(cur.fetchall()))
+            out_lines.append("")
+
+            out_lines.append("## Table size (information_schema)\n")
+            cur.execute(
+                "SELECT table_rows, data_length, index_length "
+                "FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = %s",
+                (TABLE,),
+            )
+            out_lines.append(_render_rows(cur.fetchall()))
+            out_lines.append("")
+
+            out_lines.append("## EXPLAIN per query shape\n")
+            for label, sql in QUERIES:
+                print(f"EXPLAIN: {label}")
+                cur.execute(sql)
+                rows = cur.fetchall()
+                out_lines.append(f"### {label}\n")
+                out_lines.append("```sql")
+                out_lines.append(sql.strip())
+                out_lines.append("```\n")
+                out_lines.append(_render_rows(rows))
+                out_lines.append("")
+    finally:
+        conn.close()
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(out_lines), encoding="utf-8")
+    print(f"\nWrote {out_path}")
+
+
+if __name__ == "__main__":
+    main()
