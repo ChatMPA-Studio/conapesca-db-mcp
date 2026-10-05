@@ -1,0 +1,129 @@
+# NOTA: mismo patrón que chat-mpa/.github/workflows/workflow-chatmpa-skills.yml,
+# adaptado a este repo (un solo servicio, Dockerfile en la raíz).
+# Nombres fijados por Terraform (chatmpa-migration/Infra-new30june,
+# modules/ecs_mcp_service + service.mcp-conapesca.json): servicio, family del task
+# definition y nombre del contenedor son todos "mcp-conapesca", y la imagen se
+# busca en dev-app-repo con tag "mcp-conapesca".
+# El paso "Describe existing task definition" asume que YA existe un task
+# definition activo con esa family y un servicio ECS del mismo nombre en
+# dev-ecs-cluster (lo crea Terraform con desired_count: 0 hasta que este
+# workflow sube la primera imagen).
+# El trigger es la rama release (sale de master): lo que se mezcla a release se
+# despliega a Dev.
+name: Deploy mcp-conapesca to Amazon ECS (Dev)
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: dev-app-repo
+  ECS_CLUSTER: dev-ecs-cluster
+  SERVICE_NAME: mcp-conapesca
+  # Notificaciones a Telegram, mismo endpoint/canal que chat-mpa. La API key
+  # va en el secret TELEGRAM_NOTIFY_API_KEY en vez de en claro.
+  TELEGRAM_NOTIFY_URL: https://o5qecqyi28.execute-api.us-west-2.amazonaws.com/dev
+  TELEGRAM_CHANNEL_ID: "-4820131445"
+
+jobs:
+  build:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::904596399105:role/github_role
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: notify-telegram
+        id: notify-start
+        env:
+          API_KEY: ${{ secrets.TELEGRAM_NOTIFY_API_KEY }}
+        run: |
+          msg="Deployment of <b> ${{ github.repository }} on $GITHUB_REF_NAME </b> 🚀 Start"
+          request="{\"parse_mode\" :\"HTML\" ,\"channelID\": \"$TELEGRAM_CHANNEL_ID\", \"message\": \"$msg\" }"
+          curl -X POST -H "Content-Type: application/json" -H "x-api-key:$API_KEY" -d "$request" "$TELEGRAM_NOTIFY_URL"
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ env.SERVICE_NAME }}
+        run: |
+          echo "Build image"
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: notify-telegram
+        id: notify-build
+        env:
+          API_KEY: ${{ secrets.TELEGRAM_NOTIFY_API_KEY }}
+        run: |
+          msg="Build stage for <b> ${{ github.repository }} on $GITHUB_REF_NAME </b> ✅ SUCCESS"
+          request="{\"parse_mode\" :\"HTML\" ,\"channelID\": \"$TELEGRAM_CHANNEL_ID\", \"message\": \"$msg\" }"
+          curl -X POST -H "Content-Type: application/json" -H "x-api-key:$API_KEY" -d "$request" "$TELEGRAM_NOTIFY_URL"
+
+      ###
+      ### Register new task definition in cluster
+      #
+      - name: Describe existing task definition and save JSON
+        id: describe-existing-taskdef
+        run: |
+          # Pasando solo la family, ECS devuelve la última revisión ACTIVE.
+          aws ecs describe-task-definition --task-definition "$SERVICE_NAME" --query 'taskDefinition' --output json > .github/ecs-task-definition.json
+          echo "task_definition_arn=$(jq -r '.taskDefinitionArn' .github/ecs-task-definition.json)" >> $GITHUB_OUTPUT
+          echo "Saved ECS task definition to ecs-task-definition.json"
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: .github/ecs-task-definition.json
+          container-name: ${{ env.SERVICE_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-definition.outputs.task-definition }}
+          service: ${{ env.SERVICE_NAME }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: notify-telegram
+        id: notify-success
+        env:
+          API_KEY: ${{ secrets.TELEGRAM_NOTIFY_API_KEY }}
+        run: |
+          msg="Deployment of <b> ${{ github.repository }} on $GITHUB_REF_NAME </b> ✅ SUCCESS"
+          request="{\"parse_mode\" :\"HTML\" ,\"channelID\": \"$TELEGRAM_CHANNEL_ID\", \"message\": \"$msg\" }"
+          curl -X POST -H "Content-Type: application/json" -H "x-api-key:$API_KEY" -d "$request" "$TELEGRAM_NOTIFY_URL"
+
+  debug:
+    needs: build
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: notify-telegram
+        id: notify-failed
+        env:
+          API_KEY: ${{ secrets.TELEGRAM_NOTIFY_API_KEY }}
+        run: |
+          msg="Deployment of <b> ${{ github.repository }} on $GITHUB_REF_NAME </b> 🆘 FAILED"
+          request="{\"parse_mode\" :\"HTML\" ,\"channelID\": \"$TELEGRAM_CHANNEL_ID\", \"message\": \"$msg\" }"
+          curl -X POST -H "Content-Type: application/json" -H "x-api-key:$API_KEY" -d "$request" "$TELEGRAM_NOTIFY_URL"

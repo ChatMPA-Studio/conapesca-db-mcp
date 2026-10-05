@@ -41,11 +41,12 @@ if not USE_SQLITE:
     if DATABASE_URL:
         # Parse DATABASE_URL: mysql://user:pass@host:port/dbname
         import urllib.parse
+        # urlparse leaves user/password percent-encoded, so decode them.
         _p = urllib.parse.urlparse(DATABASE_URL)
         DB_HOST     = _p.hostname or "localhost"
         DB_PORT     = _p.port or 3306
-        DB_USER     = _p.username or ""
-        DB_PASSWORD = _p.password or ""
+        DB_USER     = urllib.parse.unquote(_p.username or "")
+        DB_PASSWORD = urllib.parse.unquote(_p.password or "")
         DB_NAME     = (_p.path or "").lstrip("/")
     else:
         DB_HOST     = _require("CONAPESCA_DB_HOST")
