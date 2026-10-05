@@ -5,6 +5,7 @@ Abstracts MySQL (prod) and SQLite (dev) behind the same interface.
 
 from __future__ import annotations
 import logging
+import threading
 from typing import Any
 
 from mcp_server.config import USE_SQLITE, SQLITE_PATH
@@ -15,21 +16,58 @@ DEFAULT_MAX_ROWS = 5000
 DEFAULT_TIMEOUT  = 60
 
 
+# ── Connection pool (MySQL only) ----------------------------------------------
+#
+# Every query used to open a brand-new pymysql/TCP/TLS connection to RDS and
+# close it right after (see git history pre-pooling). Under concurrent MCP
+# calls that connect overhead is what starved the server, so a single
+# process-wide pool is created lazily on first use and reused across calls.
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool():
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            import pymysql
+            from dbutils.pooled_db import PooledDB
+            from mcp_server.config import (
+                DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
+                DB_POOL_SIZE, DB_POOL_MAX_OVERFLOW,
+            )
+            _pool = PooledDB(
+                creator=pymysql,
+                mincached=1,
+                maxcached=DB_POOL_SIZE,
+                maxconnections=DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW,
+                blocking=True,
+                ping=1,  # check connection health when taken from the pool
+                host=DB_HOST, port=DB_PORT,
+                user=DB_USER, password=DB_PASSWORD,
+                database=DB_NAME,
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+                connect_timeout=DEFAULT_TIMEOUT,
+                read_timeout=DEFAULT_TIMEOUT,
+                ssl={"ca": None},
+            )
+            logger.info(
+                "MySQL pool initialised (maxcached=%s, maxconnections=%s)",
+                DB_POOL_SIZE, DB_POOL_SIZE + DB_POOL_MAX_OVERFLOW,
+            )
+    return _pool
+
+
 # ── Connection helpers -------------------------------------------------------
 
 def _mysql_connect():
-    import pymysql
-    from mcp_server.config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
-    return pymysql.connect(
-        host=DB_HOST, port=DB_PORT,
-        user=DB_USER, password=DB_PASSWORD,
-        database=DB_NAME,
-        charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=DEFAULT_TIMEOUT,
-        read_timeout=DEFAULT_TIMEOUT,
-        ssl={"ca": None},
-    )
+    """Borrow a connection from the pool. `.close()` returns it to the pool
+    instead of actually closing the socket (PooledDB behaviour)."""
+    return _get_pool().connection()
 
 
 def _sqlite_connect():
