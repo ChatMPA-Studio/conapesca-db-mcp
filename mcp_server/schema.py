@@ -30,7 +30,9 @@ def get_coverage() -> dict:
 
 
 def build_schema_snapshot() -> dict:
-    """Always queries the live DB — no cache, so reloads are reflected immediately."""
+    """Always queries the live DB directly. The schema_snapshot tool wrapper
+    (mcp_server/server.py) caches the result for CACHE_TTL_SECONDS — this
+    function itself has no cache, so a direct call always reflects a reload."""
     coverage = get_coverage()
     return {
         "table": "conapesca_landings_historical",
