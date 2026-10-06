@@ -69,7 +69,13 @@ LOG_LEVEL: str    = _get("LOG_LEVEL", "INFO")
 
 # TTL for the in-memory cache (mcp_server/cache.py) used by near-static tools
 # (schema_snapshot, get_version, get_estados, get_offices, species_count).
-CACHE_TTL_SECONDS: float = float(_get("CACHE_TTL_SECONDS", "300"))
+# These only change when the table is reloaded and the cold calls are slow
+# (species_count ~80s on the full table), so keep them for an hour.
+CACHE_TTL_SECONDS: float = float(_get("CACHE_TTL_SECONDS", "3600"))
+
+# Pre-fill that cache in the background at startup and renew it before it
+# expires (mcp_server/warmup.py), so no client pays for the cold calls.
+CACHE_WARMUP: bool = _get("CACHE_WARMUP", "true").lower() in ("1", "true", "yes")
 
 # ── Versioning ---------------------------------------------------------------
 
