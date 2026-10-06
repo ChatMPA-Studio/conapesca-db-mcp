@@ -38,16 +38,28 @@
 ### Added
 - `mcp_server/warmup.py` — pre-fills the cache at startup with the no-argument
   calls of `get_version`, `get_offices`, `get_estados`, `schema_snapshot` and
-  `species_count`, so the first client after each deploy doesn't pay for them.
-  It runs in a background daemon thread started from `mcp_server/__main__.py`
-  (the server accepts requests immediately; the container health check is
-  unaffected), through the real tools via the in-memory `fastmcp.Client`, one call
-  at a time. Disable with `CACHE_WARMUP=false`. Each task warms its own
-  process-local cache. Verified against the real HTTP server with 3s of artificial
-  latency per query: `health_check` answered in 0.01s during the warm-up and the
-  five warmed calls then returned in ≤0.01s versus 3s for an uncached call.
-  Not covered: `get_estados(year=...)` / `get_offices(estado=...)` variants, and
-  the first call after the TTL expires, which recomputes as before.
+  `species_count`, so the first client after each deploy doesn't pay for them,
+  and then renews them before they expire (refresh-ahead), so no client pays for
+  them later either. It runs in a background daemon thread started from
+  `mcp_server/__main__.py` (the server accepts requests immediately; the
+  container health check is unaffected), through the real tools via the in-memory
+  `fastmcp.Client`, one call at a time. Disable with `CACHE_WARMUP=false`. Each
+  task keeps its own process-local cache.
+  - A full pass starts every 80% of `CACHE_TTL_SECONDS` (48 min at the default).
+    Each pass runs inside `cache.refreshing()` (new in `mcp_server/cache.py`,
+    thread-local): the tool recomputes and `cache.set()` swaps in the fresh entry,
+    while the threads serving clients keep reading the previous one — there is no
+    cold gap. `cache.expires_at()` lets the warm-up confirm each entry was renewed.
+  - A call that fails keeps its old entry and is retried on its own, waiting
+    60s and doubling up to 10 min, never later than the next full pass — so a
+    heavy query that keeps timing out is not hammered. A warning is logged if a
+    full pass takes longer than 80% of the TTL (then raise `CACHE_TTL_SECONDS`).
+  - Verified against the real HTTP server with 3s of artificial latency per query
+    and `CACHE_TTL_SECONDS=60`: 375 calls to the five cached tools over ~2.5 minutes
+    (three TTL expirations, three renewals) — none took longer than 0.5s, versus
+    3s for an uncached call.
+  - Not covered: `get_estados(year=...)` / `get_offices(estado=...)` variants, and
+    the first minutes after a task starts, until its first full pass finishes.
 - `mcp_server/cache.py` — in-memory TTL cache (`CACHE_TTL_SECONDS`, default 3600s)
   for near-static tools that used to hit the DB on every call:
   `get_estados`, `get_offices`, `species_count`, `get_version`, `schema_snapshot`.
