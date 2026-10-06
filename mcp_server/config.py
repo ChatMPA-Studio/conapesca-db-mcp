@@ -80,7 +80,7 @@ except _meta.PackageNotFoundError:
 
 # Bump this when the MCP is updated for a new DB version.
 # If the live db_version_log differs from this, the server logs a warning at startup.
-TESTED_DB_VERSION: str = "0.0.3"
+TESTED_DB_VERSION: str = "0.0.4"
 
 # ── Logging -----------------------------------------------------------------
 

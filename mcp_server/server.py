@@ -160,7 +160,7 @@ def coverage_info() -> str:
 ## Temporal
 - Years: 2001–2026 (fiscal year of landing)
 - Source: AWS RDS table (conapesca_landings_historical)
-- Current version: v0.0.3 (2026-07-31) — ~12,750,506 rows, 70 columns
+- Current version: v0.0.4 (2026-08-10) — ~12,750,506 rows, 77 columns
 
 ## Geographic
 - All Mexican coasts (Pacific + Gulf + Caribbean)
