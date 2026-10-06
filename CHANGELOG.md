@@ -29,9 +29,26 @@
   DB-version-mismatch warning on startup. No tool query needed changes: every
   column the tools use exists in v0.0.4. The `conapesca://coverage` resource and
   the README version history were updated to match.
+- `CACHE_TTL_SECONDS` default raised `300` → `3600`. Measured on the Dev MCP
+  (12.75M rows), the cold calls are slow — `species_count` ~80s, `schema_snapshot`
+  ~28s, `get_estados()` ~18s — and their data only changes when the table is
+  reloaded, so a 5-minute TTL made one client in every five minutes pay for them.
+  If the ECS task definition sets `CACHE_TTL_SECONDS` explicitly, that value wins.
 
 ### Added
-- `mcp_server/cache.py` — in-memory TTL cache (default 300s, `CACHE_TTL_SECONDS`)
+- `mcp_server/warmup.py` — pre-fills the cache at startup with the no-argument
+  calls of `get_version`, `get_offices`, `get_estados`, `schema_snapshot` and
+  `species_count`, so the first client after each deploy doesn't pay for them.
+  It runs in a background daemon thread started from `mcp_server/__main__.py`
+  (the server accepts requests immediately; the container health check is
+  unaffected), through the real tools via the in-memory `fastmcp.Client`, one call
+  at a time. Disable with `CACHE_WARMUP=false`. Each task warms its own
+  process-local cache. Verified against the real HTTP server with 3s of artificial
+  latency per query: `health_check` answered in 0.01s during the warm-up and the
+  five warmed calls then returned in ≤0.01s versus 3s for an uncached call.
+  Not covered: `get_estados(year=...)` / `get_offices(estado=...)` variants, and
+  the first call after the TTL expires, which recomputes as before.
+- `mcp_server/cache.py` — in-memory TTL cache (`CACHE_TTL_SECONDS`, default 3600s)
   for near-static tools that used to hit the DB on every call:
   `get_estados`, `get_offices`, `species_count`, `get_version`, `schema_snapshot`.
 - `tests/` — no automated tests existed before this pass. Added
