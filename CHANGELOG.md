@@ -22,6 +22,14 @@
   (fetches one row past the cap to tell "exactly at the cap" apart from
   "more rows exist beyond it").
 
+### Changed
+- `TESTED_DB_VERSION` bumped `0.0.3` → `0.0.4` (`mcp_server/config.py`) to match
+  the live DB behind the `release` MCP (MySQL 8.4.11, 12,750,506 rows, 77 columns,
+  7 new office geographic-key columns). Without this the server logs a
+  DB-version-mismatch warning on startup. No tool query needed changes: every
+  column the tools use exists in v0.0.4. The `conapesca://coverage` resource and
+  the README version history were updated to match.
+
 ### Added
 - `mcp_server/cache.py` — in-memory TTL cache (default 300s, `CACHE_TTL_SECONDS`)
   for near-static tools that used to hit the DB on every call:
