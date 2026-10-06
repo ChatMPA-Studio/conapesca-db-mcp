@@ -44,6 +44,7 @@ COLUMNS = [
     "genus", "family", "order", "class", "phylum", "kingdom",
     "worms_id", "spec_code_fishbase", "fishbase_database",
     "k", "loo", "lmax", "tmax", "wmax", "trophic_level",
+    "nombre_principal", "nombre_cientifico_canonico",
 ]
 
 # Six rows, deliberately covering (see tests/*.py docstrings for the exact
@@ -55,45 +56,56 @@ COLUMNS = [
 #   - two-word (species-level) nombre_cientifico (rows A, C)
 #   - a genus-level, family-level and unclassified single-word
 #     nombre_cientifico (rows E, D, F respectively) for species_count()
+#   - nombre_principal (resource group) and nombre_cientifico_canonico: the
+#     canonical name equals nombre_cientifico in every row, so the
+#     species_count()/get_species() expectations below hold for either; tests
+#     that need them to differ UPDATE a row and restore it (see
+#     tests/test_cpue_support.py). CAMARON groups rows A (SINALOA) and D (SONORA).
 ROWS = [
     # A: SINALOA/MENORES/2020, folio F1, species-level
     (2020, "2020-03-15", "MENORES", "F1", "SINALOA", "OFICINA NORTE", "SITIO A", "COOP1",
      "CAMARON", "Litopenaeus vannamei", 100.0, 5000.0, "ARTESANAL", "PACIFICO",
      5, "bitacora", 0, 0, 0,
      "Litopenaeus", "Penaeidae", "Decapoda", "Malacostraca", "Arthropoda", "Animalia",
-     1, 1, "fb", 0.1, 20, 25, 5, 500, 3.2),
+     1, 1, "fb", 0.1, 20, 25, 5, 500, 3.2,
+     "CAMARON", "Litopenaeus vannamei"),
     # B: same folio F1 as A (2nd species line), nombre_cientifico = ND
     (2020, "2020-03-16", "MENORES", "F1", "SINALOA", "OFICINA NORTE", "SITIO A", "COOP1",
      "JAIBA", "ND", 50.0, 1000.0, "ARTESANAL", "PACIFICO",
      5, "bitacora", 0, 0, 0,
      None, None, None, None, None, None,
-     None, None, None, None, None, None, None, None, None),
+     None, None, None, None, None, None, None, None, None,
+     "JAIBA", "ND"),
     # C: SONORA/MAYORES/2021, folio F2, species-level
     (2021, "2021-07-01", "MAYORES", "F2", "SONORA", "OFICINA SUR", "SITIO B", "COOP2",
      "ATUN", "Thunnus albacares", 200.0, 20000.0, "INDUSTRIAL", "PACIFICO",
      10, "bitacora", 0, 0, 0,
      "Thunnus", "Scombridae", "Perciformes", "Actinopterygii", "Chordata", "Animalia",
-     2, 2, "fb", 0.2, 150, 200, 10, 50000, 4.0),
+     2, 2, "fb", 0.2, 150, 200, 10, 50000, 4.0,
+     "ATUN", "Thunnus albacares"),
     # D: same folio F2 as C (2nd species line), family-level nombre_cientifico
     # (genus column is None so classification falls through to family)
     (2021, "2021-07-02", "MAYORES", "F2", "SONORA", "OFICINA SUR", "SITIO B", "COOP2",
      "CAMARON ROSADO", "Penaeidae", 20.0, 800.0, "INDUSTRIAL", "PACIFICO",
      10, "bitacora", 0, 0, 0,
      None, "Penaeidae", "Decapoda", "Malacostraca", "Arthropoda", "Animalia",
-     3, 3, "fb", 0.12, 18, 22, 4, 400, 3.0),
+     3, 3, "fb", 0.12, 18, 22, 4, 400, 3.0,
+     "CAMARON", "Penaeidae"),
     # E: SONORA/COSECHA/2021, folio F3, genus-level nombre_cientifico
     (2021, "2021-08-01", "COSECHA", "F3", "SONORA", "OFICINA SUR", "SITIO C", "COOP3",
      "MOJARRA", "Oreochromis", 30.0, 900.0, "ACUACULTURA", "GOLFO",
      None, None, 1, 0, 0,
      "Oreochromis", "Cichlidae", "Cichliformes", "Actinopterygii", "Chordata", "Animalia",
-     4, 4, "fb", 0.15, 30, 35, 6, 800, 2.9),
+     4, 4, "fb", 0.15, 30, 35, 6, 800, 2.9,
+     "MOJARRA", "Oreochromis"),
     # F: SINALOA/MENORES/2020, folio F4 (single-line trip), unclassified
     # nombre_cientifico (doesn't match any of its own taxonomy columns)
     (2020, "2020-01-10", "MENORES", "F4", "SINALOA", "OFICINA NORTE", "SITIO A", "COOP1",
      "PULPO", "Mysteryus", 15.0, 450.0, "ARTESANAL", "PACIFICO",
      2, "bitacora", 0, 0, 0,
      "Octopus", "Octopodidae", "Octopoda", "Cephalopoda", "Mollusca", "Animalia",
-     5, 5, "fb", 0.05, 10, 12, 3, 100, 2.5),
+     5, 5, "fb", 0.05, 10, 12, 3, 100, 2.5,
+     "PULPO", "Mysteryus"),
 ]
 
 
