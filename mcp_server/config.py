@@ -54,11 +54,21 @@ if not USE_SQLITE:
         DB_PASSWORD = _require("CONAPESCA_DB_PASSWORD")
         DB_NAME     = _require("CONAPESCA_DB_NAME")
 
+    # Connection pool sizing (MySQL only). maxconnections = POOL_SIZE + MAX_OVERFLOW.
+    DB_POOL_SIZE: int         = int(_get("DB_POOL_SIZE", "5"))
+    DB_POOL_MAX_OVERFLOW: int = int(_get("DB_POOL_MAX_OVERFLOW", "5"))
+
 # ── Server -------------------------------------------------------------------
 
 PORT: int         = int(_get("PORT", "8000"))
 MCP_BASE_PATH: str = _get("MCP_BASE_PATH", "/mcp")
 LOG_LEVEL: str    = _get("LOG_LEVEL", "INFO")
+
+# ── Caching -------------------------------------------------------------------
+
+# TTL for the in-memory cache (mcp_server/cache.py) used by near-static tools
+# (schema_snapshot, get_version, get_estados, get_offices, species_count).
+CACHE_TTL_SECONDS: float = float(_get("CACHE_TTL_SECONDS", "300"))
 
 # ── Versioning ---------------------------------------------------------------
 
@@ -70,7 +80,7 @@ except _meta.PackageNotFoundError:
 
 # Bump this when the MCP is updated for a new DB version.
 # If the live db_version_log differs from this, the server logs a warning at startup.
-TESTED_DB_VERSION: str = "0.0.3"
+TESTED_DB_VERSION: str = "0.0.4"
 
 # ── Logging -----------------------------------------------------------------
 

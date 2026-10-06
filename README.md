@@ -118,3 +118,4 @@ VALUES ('0.1.0', 'conapesca_landings_historical', NOW(), <row_count>, 'brief des
 | DB version | Uploaded | Notes |
 |------------|----------|-------|
 | `0.0.1` | 2026-06-29 | Initial upload — Pacific landings 2001–2026 |
+| `0.0.4` | 2026-08-10 | Geographic keys for fishing offices — 7 new columns (`estado_oficina`, `cve_ent_oficina`, `cve_mun_oficina`, `municipio_oficina`, `cvegeo_loc_oficina`, `cve_loc_oficina`, `localidad_oficina`). Same rows as 0.0.3 (12,750,506). No tool queries them yet. |

@@ -4,9 +4,11 @@ No aggregations, no statistics: just filtered raw data.
 """
 
 from __future__ import annotations
+import asyncio
 import json
 from decimal import Decimal
-from mcp_server.db import execute_select
+from mcp_server import cache
+from mcp_server.db import execute_select, DEFAULT_MAX_ROWS
 
 
 def _json(obj) -> str:
@@ -24,14 +26,15 @@ def _tipo(nc: str | None) -> str:
     return "especie" if (nc and nc.upper() != "ND" and " " in nc) else "recurso"
 
 
+# Every tool below is declared `async def` and immediately hands its blocking
+# DB work off to a worker thread via `asyncio.to_thread`. FastMCP only awaits
+# a tool's return value if it is already awaitable — a plain sync function
+# would run its pymysql call directly on the event loop, freezing the whole
+# server (including unrelated concurrent calls) for the query's duration.
+
 def register(mcp) -> None:
 
-    @mcp.tool()
-    def get_estados(year: int | None = None) -> str:
-        """
-        List all Mexican states (nombre_estado) present in the landings.
-        Optionally filter by year.
-        """
+    def _get_estados_sync(year: int | None) -> str:
         conditions, params = [], []
         if year:
             conditions.append("anio_corte = ?")
@@ -46,19 +49,25 @@ def register(mcp) -> None:
         return _json({"estados": estados, "meta": {"count": len(estados), "year": year}})
 
     @mcp.tool()
-    def get_species(
-        year: int | None = None,
-        estado: str | None = None,
-        tipo_aviso: str | None = None,
-        top_n: int | None = None,
+    async def get_estados(year: int | None = None) -> str:
+        """
+        List all Mexican states (nombre_estado) present in the landings.
+        Optionally filter by year.
+        """
+        key = ("get_estados", year)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = await asyncio.to_thread(_get_estados_sync, year)
+        cache.set(key, result)
+        return result
+
+    def _get_species_sync(
+        year: int | None,
+        estado: str | None,
+        tipo_aviso: str | None,
+        top_n: int | None,
     ) -> str:
-        """
-        List species (nombre_especie + nombre_cientifico) with total landed
-        weight (kg), estimated value (MXN) and record count.
-        Filters: year, estado, tipo_aviso (MAYORES/MENORES/COSECHA).
-        top_n: if provided, return only the top N species by landed weight
-        (max 500); if omitted, return all matching combinations.
-        """
         conditions, params = [], []
         if year:
             conditions.append("anio_corte = ?")
@@ -95,18 +104,22 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
-    def species_count() -> str:
+    async def get_species(
+        year: int | None = None,
+        estado: str | None = None,
+        tipo_aviso: str | None = None,
+        top_n: int | None = None,
+    ) -> str:
         """
-        Count unique scientific names (nombre_cientifico) and classify them by
-        taxonomic resolution level (species, genus, family, order, class, phylum).
-        A name with two or more words is species-level; a single-word name is
-        matched against the taxonomy columns (genus, family, order, class, phylum,
-        kingdom) to determine its resolution.  Classification is done on unique
-        values of nombre_cientifico, not on individual rows.
-        Also reports which nombre_especie entries have no scientific name
-        (nombre_cientifico = ND or empty) and how many records they represent.
-        Use this tool to answer any question about species diversity or richness.
+        List species (nombre_especie + nombre_cientifico) with total landed
+        weight (kg), estimated value (MXN) and record count.
+        Filters: year, estado, tipo_aviso (MAYORES/MENORES/COSECHA).
+        top_n: if provided, return only the top N species by landed weight
+        (max 500); if omitted, return all matching combinations.
         """
+        return await asyncio.to_thread(_get_species_sync, year, estado, tipo_aviso, top_n)
+
+    def _species_count_sync() -> str:
         # One row per unique nombre_cientifico with representative taxonomy
         identified_rows = execute_select(
             "SELECT nombre_cientifico, "
@@ -188,39 +201,35 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
-    def get_landings(
-        year: int | None = None,
-        estado: str | None = None,
-        especie: str | None = None,
-        tipo_aviso: str | None = None,
-        oficina: str | None = None,
-        limit: int = 500,
-        group_by: str | None = None,
+    async def species_count() -> str:
+        """
+        Count unique scientific names (nombre_cientifico) and classify them by
+        taxonomic resolution level (species, genus, family, order, class, phylum).
+        A name with two or more words is species-level; a single-word name is
+        matched against the taxonomy columns (genus, family, order, class, phylum,
+        kingdom) to determine its resolution.  Classification is done on unique
+        values of nombre_cientifico, not on individual rows.
+        Also reports which nombre_especie entries have no scientific name
+        (nombre_cientifico = ND or empty) and how many records they represent.
+        Use this tool to answer any question about species diversity or richness.
+        """
+        key = ("species_count",)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = await asyncio.to_thread(_species_count_sync)
+        cache.set(key, result)
+        return result
+
+    def _get_landings_sync(
+        year: int | None,
+        estado: str | None,
+        especie: str | None,
+        tipo_aviso: str | None,
+        oficina: str | None,
+        limit: int,
+        group_by: str | None,
     ) -> str:
-        """
-        Return landing data filtered by any combination of year, estado,
-        especie (partial match against nombre_especie OR nombre_cientifico),
-        tipo_aviso, oficina (exact match — use get_offices() to find the exact
-        nombre_oficina value).
-
-        group_by=None (default): individual landing records (avisos de arribo),
-        one row per species line per trip. Includes dias_efectivos and quality
-        flags. Capped at `limit` rows (max 2000).
-
-        group_by="folio": one row per trip (folio_aviso), aggregating
-        peso_desembarcado_kg across all species lines of the same folio.
-        Includes dias_efectivos, quality flags, and effort source. Use this
-        for CPUE computation — it is the correct aggregation unit. No row limit.
-
-        group_by="year": annual aggregates — total kg, value, record count per
-        year. Use for time-series / trend queries. No row limit.
-
-        group_by="estado": aggregates by state — total kg, value, record count
-        per estado, sorted by total_kg desc. No row limit.
-
-        group_by="litoral": aggregates by coast — total kg, value, record count
-        per litoral. No row limit.
-        """
         conditions, params = [], []
         if year:
             conditions.append("anio_corte = ?")
@@ -260,14 +269,19 @@ def register(mcp) -> None:
                 f"GROUP BY folio_aviso, anio_corte, tipo_aviso, "
                 f"nombre_estado, nombre_oficina "
                 f"ORDER BY anio_corte, folio_aviso",
-                p,
+                p, max_rows=DEFAULT_MAX_ROWS + 1,
             )
+            # Fetch one row past the cap so "exactly DEFAULT_MAX_ROWS results
+            # exist" can be told apart from "truncated at DEFAULT_MAX_ROWS".
+            truncated = len(rows) > DEFAULT_MAX_ROWS
+            rows = rows[:DEFAULT_MAX_ROWS]
             return _json({
                 "by_folio": [dict(r) for r in rows],
                 "meta": {
                     "filters": {"year": year, "estado": estado, "especie": especie,
                                 "tipo_aviso": tipo_aviso, "oficina": oficina},
                     "folio_count": len(rows),
+                    "truncated": truncated,
                     "note": (
                         "One row per trip. dias_efectivos is a trip-level field "
                         "identical across all species lines of the same folio. "
@@ -283,14 +297,17 @@ def register(mcp) -> None:
                 f"SELECT anio_corte, {agg_select}"
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY anio_corte ORDER BY anio_corte",
-                p, max_rows=100,
+                p, max_rows=101,
             )
+            truncated = len(rows) > 100
+            rows = rows[:100]
             return _json({
                 "annual_trend": [dict(r) for r in rows],
                 "meta": {
                     "filters": {"year": year, "estado": estado, "especie": especie,
                                 "tipo_aviso": tipo_aviso, "oficina": oficina},
                     "year_count": len(rows),
+                    "truncated": truncated,
                 },
             })
 
@@ -299,14 +316,17 @@ def register(mcp) -> None:
                 f"SELECT nombre_estado, {agg_select}"
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY nombre_estado ORDER BY total_kg DESC",
-                p, max_rows=50,
+                p, max_rows=51,
             )
+            truncated = len(rows) > 50
+            rows = rows[:50]
             return _json({
                 "by_estado": [dict(r) for r in rows],
                 "meta": {
                     "filters": {"year": year, "estado": estado, "especie": especie,
                                 "tipo_aviso": tipo_aviso, "oficina": oficina},
                     "estado_count": len(rows),
+                    "truncated": truncated,
                 },
             })
 
@@ -315,13 +335,16 @@ def register(mcp) -> None:
                 f"SELECT litoral, {agg_select}"
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY litoral ORDER BY total_kg DESC",
-                p, max_rows=10,
+                p, max_rows=11,
             )
+            truncated = len(rows) > 10
+            rows = rows[:10]
             return _json({
                 "by_litoral": [dict(r) for r in rows],
                 "meta": {
                     "filters": {"year": year, "estado": estado, "especie": especie,
                                 "tipo_aviso": tipo_aviso, "oficina": oficina},
+                    "truncated": truncated,
                 },
             })
 
@@ -335,8 +358,10 @@ def register(mcp) -> None:
             f"flag_fecha_generica, flag_dias_efectivos_sospechoso, flag_periodo_futuro "
             f"FROM conapesca_landings_historical {where} "
             f"ORDER BY fecha_aviso DESC",
-            p, max_rows=safe_limit,
+            p, max_rows=safe_limit + 1,
         )
+        truncated = len(rows) > safe_limit
+        rows = rows[:safe_limit]
         return _json({
             "landings": [{**dict(r), "tipo": _tipo(r.get("nombre_cientifico"))} for r in rows],
             "meta": {
@@ -344,16 +369,54 @@ def register(mcp) -> None:
                             "tipo_aviso": tipo_aviso, "oficina": oficina},
                 "row_count": len(rows),
                 "limit": safe_limit,
+                "truncated": truncated,
             },
         })
 
     @mcp.tool()
-    def record_count() -> str:
+    async def get_landings(
+        year: int | None = None,
+        estado: str | None = None,
+        especie: str | None = None,
+        tipo_aviso: str | None = None,
+        oficina: str | None = None,
+        limit: int = 500,
+        group_by: str | None = None,
+    ) -> str:
         """
-        Return total record count and year range in the CONAPESCA landings
-        database. Fast single-row query — use this instead of get_landings
-        when only the total size or date range is needed.
+        Return landing data filtered by any combination of year, estado,
+        especie (partial match against nombre_especie OR nombre_cientifico),
+        tipo_aviso, oficina (exact match — use get_offices() to find the exact
+        nombre_oficina value).
+
+        group_by=None (default): individual landing records (avisos de arribo),
+        one row per species line per trip. Includes dias_efectivos and quality
+        flags. Capped at `limit` rows (max 2000). meta.truncated is true if
+        the cap was hit.
+
+        group_by="folio": one row per trip (folio_aviso), aggregating
+        peso_desembarcado_kg across all species lines of the same folio.
+        Includes dias_efectivos, quality flags, and effort source. Use this
+        for CPUE computation — it is the correct aggregation unit. Capped at
+        5000 folios; meta.truncated is true if the cap was hit.
+
+        group_by="year": annual aggregates — total kg, value, record count per
+        year. Use for time-series / trend queries. Capped at 100 years;
+        meta.truncated is true if the cap was hit.
+
+        group_by="estado": aggregates by state — total kg, value, record count
+        per estado, sorted by total_kg desc. Capped at 50 estados;
+        meta.truncated is true if the cap was hit.
+
+        group_by="litoral": aggregates by coast — total kg, value, record count
+        per litoral. Capped at 10 litorales; meta.truncated is true if the cap
+        was hit.
         """
+        return await asyncio.to_thread(
+            _get_landings_sync, year, estado, especie, tipo_aviso, oficina, limit, group_by,
+        )
+
+    def _record_count_sync() -> str:
         rows = execute_select(
             "SELECT COUNT(*) AS total_records, "
             "MIN(anio_corte) AS first_year, MAX(anio_corte) AS last_year "
@@ -363,11 +426,15 @@ def register(mcp) -> None:
         return _json(r)
 
     @mcp.tool()
-    def get_offices(estado: str | None = None) -> str:
+    async def record_count() -> str:
         """
-        List fishing offices (oficinas CONAPESCA) with their state and
-        number of landing records.
+        Return total record count and year range in the CONAPESCA landings
+        database. Fast single-row query — use this instead of get_landings
+        when only the total size or date range is needed.
         """
+        return await asyncio.to_thread(_record_count_sync)
+
+    def _get_offices_sync(estado: str | None) -> str:
         conditions, params = [], []
         if estado:
             conditions.append("nombre_estado = ?")
@@ -387,11 +454,20 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
-    def get_taxonomy(especie: str) -> str:
+    async def get_offices(estado: str | None = None) -> str:
         """
-        Return the taxonomic classification for a species name
-        (kingdom → genus) plus FishBase traits if available.
+        List fishing offices (oficinas CONAPESCA) with their state and
+        number of landing records.
         """
+        key = ("get_offices", estado)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = await asyncio.to_thread(_get_offices_sync, estado)
+        cache.set(key, result)
+        return result
+
+    def _get_taxonomy_sync(especie: str) -> str:
         rows = execute_select(
             "SELECT DISTINCT nombre_especie, nombre_cientifico, "
             "kingdom, phylum, class, `order`, family, genus, worms_id, "
@@ -406,3 +482,11 @@ def register(mcp) -> None:
             "taxonomy": [dict(r) for r in rows],
             "meta": {"query": especie, "count": len(rows)},
         })
+
+    @mcp.tool()
+    async def get_taxonomy(especie: str) -> str:
+        """
+        Return the taxonomic classification for a species name
+        (kingdom → genus) plus FishBase traits if available.
+        """
+        return await asyncio.to_thread(_get_taxonomy_sync, especie)

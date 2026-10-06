@@ -3,6 +3,7 @@ reporting — summary and aggregation tools.
 """
 
 from __future__ import annotations
+import asyncio
 import json
 from decimal import Decimal
 from mcp_server.db import execute_select
@@ -16,19 +17,13 @@ def _json(obj) -> str:
     return json.dumps(obj, default=_default, ensure_ascii=False)
 
 
+# Same rationale as tools/data_access.py: each tool is `async def` and offloads
+# its blocking pymysql call to a worker thread via `asyncio.to_thread` so it
+# never blocks the event loop for other concurrent MCP calls.
+
 def register(mcp) -> None:
 
-    @mcp.tool()
-    def landings_by_year(
-        estado: str | None = None,
-        tipo_aviso: str | None = None,
-    ) -> str:
-        """
-        Annual summary: total landed weight (kg), estimated value (MXN),
-        number of records, unique species (binomial nombre_cientifico) and
-        recursos (no valid nombre_cientifico) per year.
-        Filters: estado, tipo_aviso.
-        """
+    def _landings_by_year_sync(estado: str | None, tipo_aviso: str | None) -> str:
         conditions, params = [], []
         if estado:
             conditions.append("nombre_estado = ?")
@@ -63,15 +58,19 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
-    def landings_by_estado(
-        year: int | None = None,
+    async def landings_by_year(
+        estado: str | None = None,
         tipo_aviso: str | None = None,
     ) -> str:
         """
-        Landings by state: weight, value, records, unique species (binomial
-        nombre_cientifico) and recursos (no valid nombre_cientifico).
-        Filters: year, tipo_aviso.
+        Annual summary: total landed weight (kg), estimated value (MXN),
+        number of records, unique species (binomial nombre_cientifico) and
+        recursos (no valid nombre_cientifico) per year.
+        Filters: estado, tipo_aviso.
         """
+        return await asyncio.to_thread(_landings_by_year_sync, estado, tipo_aviso)
+
+    def _landings_by_estado_sync(year: int | None, tipo_aviso: str | None) -> str:
         conditions, params = [], []
         if year:
             conditions.append("anio_corte = ?")
@@ -106,11 +105,18 @@ def register(mcp) -> None:
         })
 
     @mcp.tool()
-    def landings_by_fleet_type(year: int | None = None) -> str:
+    async def landings_by_estado(
+        year: int | None = None,
+        tipo_aviso: str | None = None,
+    ) -> str:
         """
-        Landings split by fleet type (MAYORES / MENORES / COSECHA):
-        weight, value, record count per type.
+        Landings by state: weight, value, records, unique species (binomial
+        nombre_cientifico) and recursos (no valid nombre_cientifico).
+        Filters: year, tipo_aviso.
         """
+        return await asyncio.to_thread(_landings_by_estado_sync, year, tipo_aviso)
+
+    def _landings_by_fleet_type_sync(year: int | None) -> str:
         conditions, params = [], []
         if year:
             conditions.append("anio_corte = ?")
@@ -131,3 +137,10 @@ def register(mcp) -> None:
             "meta": {"year": year},
         })
 
+    @mcp.tool()
+    async def landings_by_fleet_type(year: int | None = None) -> str:
+        """
+        Landings split by fleet type (MAYORES / MENORES / COSECHA):
+        weight, value, record count per type.
+        """
+        return await asyncio.to_thread(_landings_by_fleet_type_sync, year)
