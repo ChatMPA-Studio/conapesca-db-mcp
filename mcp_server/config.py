@@ -72,8 +72,8 @@ LOG_LEVEL: str    = _get("LOG_LEVEL", "INFO")
 # (species_count ~80s on the full table), so keep them for an hour.
 CACHE_TTL_SECONDS: float = float(_get("CACHE_TTL_SECONDS", "3600"))
 
-# Pre-fill that cache in the background at startup (mcp_server/warmup.py), so
-# the first client after every deploy doesn't pay for the cold calls.
+# Pre-fill that cache in the background at startup and renew it before it
+# expires (mcp_server/warmup.py), so no client pays for the cold calls.
 CACHE_WARMUP: bool = _get("CACHE_WARMUP", "true").lower() in ("1", "true", "yes")
 
 # ── Versioning ---------------------------------------------------------------
