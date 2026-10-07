@@ -22,6 +22,14 @@
   (fetches one row past the cap to tell "exactly at the cap" apart from
   "more rows exist beyond it").
 
+- The `[0.3.0]` docs said "No row limit" for `folio`, `year`, `year_fleet`,
+  `office_year_fleet`, `estado` and `litoral`, but every mode is capped by
+  `security.enforce_limit`. Docstrings corrected and `meta.truncated` added to the new
+  modes too. Measured against the Dev MCP: one state-year of folios (BCS, Sinaloa and
+  Sonora 2022) already exceeds the 5000-row cap, and an office with no year returned only
+  2000-2009. `meta.truncated` makes that visible; covering the full history needs
+  pagination, which is not part of this change.
+
 ### Changed
 - `TESTED_DB_VERSION` bumped `0.0.3` → `0.0.4` (`mcp_server/config.py`) to match
   the live DB behind the `release` MCP (MySQL 8.4.11, 12,750,506 rows, 77 columns,
@@ -34,6 +42,20 @@
   ~28s, `get_estados()` ~18s — and their data only changes when the table is
   reloaded, so a 5-minute TTL made one client in every five minutes pay for them.
   If the ECS task definition sets `CACHE_TTL_SECONDS` explicitly, that value wins.
+
+- Integrated the CPUE-skill work (`[0.3.0]` below) into the async tools: the
+  `nombre_principal` / `nombre_cientifico_canonico` filters, `year_from` / `year_to`,
+  the `year_fleet` and `office_year_fleet` modes, `litoral` and the species columns in
+  row-level records, and one row per trip in `group_by="folio"` — all keeping
+  `asyncio.to_thread`, the cache and `meta.truncated`. Output contract changes for
+  anything reading the raw JSON (the orchestrator and the skills do not read these
+  by key): `get_species` rows carry `nombre_cientifico_canonico` instead of
+  `nombre_cientifico`; `species_count` classifies on the canonical name and its summary
+  key is `total_unique_nombre_cientifico_canonico`; `get_taxonomy` returns one row per
+  canonical name with `nombres_especie_conapesca`, searching the canonical name first
+  and falling back to `nombre_especie` (`meta.search_field` says which one answered);
+  `meta.filters` lists `year_from`, `year_to`, `nombre_principal` and
+  `nombre_cientifico_canonico` in every mode. The `especie` filter is unchanged.
 
 ### Added
 - `mcp_server/warmup.py` — pre-fills the cache at startup with the no-argument
@@ -73,6 +95,26 @@
   RDS table, derived from the actual query shapes in the tool code. Not
   applied — this container has no visibility into the live RDS's current
   indexes; needs verification by whoever owns the database.
+
+## [0.3.0] — 2026-08-17
+
+### Changed
+- `get_landings`: expanded to cover all panel skills without future per-skill patches:
+  - New filters: `nombre_principal` (exact match), `nombre_cientifico_canonico` (exact match),
+    `year_from` / `year_to` (inclusive year range, alternative to `year`)
+  - New `group_by` modes:
+    - `"year_fleet"` — annual totals per `anio_corte × tipo_aviso`. No row limit.
+      Used by `conapesca-landings-timeseries` and `conapesca-comparative-summary`.
+    - `"office_year_fleet"` — annual totals per `oficina × anio_corte × tipo_aviso`
+      for all offices matching the filters. No row limit.
+      Used by `conapesca-national-ranking` (compare one office vs national universe).
+  - `group_by="folio"` keeps one row per trip (`folio_aviso`). `nombre_principal` and
+    `nombre_cientifico_canonico` filter in the WHERE (server-side) but are not added to
+    the SELECT or GROUP BY: grouping by species split multi-species trips into several
+    rows and miscounted trips in `conapesca-cpue` (see chatmpa-skills#16).
+  - Default (no group_by) now includes `nombre_principal` and `nombre_cientifico_canonico`
+    in the SELECT columns.
+  - All modes share a unified `active_filters` dict in `meta` for consistency.
 
 ## [0.2.0] — 2026-06-29
 
