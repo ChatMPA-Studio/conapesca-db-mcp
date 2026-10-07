@@ -185,7 +185,7 @@ def test_species_count_classifies_every_taxonomic_level(call_tool):
     assert data["by_level"]["unclassified"] == ["Mysteryus"]
     assert "order" not in data["by_level"]  # no fixture row lands there
 
-    assert data["summary"]["total_unique_nombre_cientifico"] == 5
+    assert data["summary"]["total_unique_nombre_cientifico_canonico"] == 5
     assert data["summary"]["by_taxonomic_level"] == {
         "species": 2, "genus": 1, "family": 1, "unclassified": 1,
     }
@@ -213,10 +213,12 @@ def test_get_landings_default_returns_all_rows_ordered_by_fecha_desc(call_tool):
     assert meta["limit"] == 500
     assert meta["truncated"] is False
     assert meta["filters"] == {
-        "year": None, "estado": None, "especie": None,
+        "year": None, "year_from": None, "year_to": None,
+        "estado": None, "especie": None,
+        "nombre_principal": None, "nombre_cientifico_canonico": None,
         "tipo_aviso": None, "oficina": None,
     }
-    # row-level records get a computed "tipo" field, keyed off nombre_cientifico
+    # row-level records get a computed "tipo" field, keyed off nombre_cientifico_canonico
     tipos = {r["folio_aviso"]: r["tipo"] for r in data["landings"]}
     assert tipos["F3"] == "recurso"  # Oreochromis (E)
 
@@ -292,9 +294,9 @@ def test_get_landings_group_by_folio_aggregates_species_lines(call_tool):
     assert [r["folio_aviso"] for r in data["by_folio"]] == ["F1", "F4", "F2", "F3"]
 
 
-def test_get_landings_group_by_folio_has_no_row_cap(call_tool):
-    # group_by="folio" passes no max_rows override (defaults to db.py's
-    # DEFAULT_MAX_ROWS=5000) and has no `limit` argument in its query path.
+def test_get_landings_group_by_folio_ignores_the_limit_argument(call_tool):
+    # group_by="folio" is capped at db.py's DEFAULT_MAX_ROWS (5000), reported in
+    # meta.truncated, and has no `limit` argument in its query path.
     data = call_tool("get_landings", {"group_by": "folio", "limit": 1})
     assert data["meta"]["folio_count"] == 4  # `limit` is ignored for this branch
 
@@ -387,27 +389,37 @@ def test_get_offices_no_matches(call_tool):
 
 # ── get_taxonomy ---------------------------------------------------------------
 
-def test_get_taxonomy_matches_nombre_especie(call_tool):
+def test_get_taxonomy_falls_back_to_nombre_especie(call_tool):
+    # "atun" is a common name: no canonical scientific name contains it, so the
+    # canonical search comes back empty and the nombre_especie fallback answers.
     data = call_tool("get_taxonomy", {"especie": "atun"})
     assert data["meta"]["count"] == 1
+    assert data["meta"]["search_field"] == "nombre_especie"
     row = data["taxonomy"][0]
-    assert row["nombre_especie"] == "ATUN"
+    assert row["nombres_especie_conapesca"] == "ATUN"
+    assert row["nombre_cientifico_canonico"] == "Thunnus albacares"
     assert row["genus"] == "Thunnus"
     assert row["tipo_pesca_canonico"] == "INDUSTRIAL"
 
 
-def test_get_taxonomy_matches_nombre_cientifico_specifically(call_tool):
-    # "vannamei" is only present in nombre_cientifico, confirming the OR
-    # condition really covers both columns.
+def test_get_taxonomy_searches_the_canonical_name_first(call_tool):
+    # "vannamei" is only present in the scientific name: found on the first
+    # (canonical) search, with no fallback.
     data = call_tool("get_taxonomy", {"especie": "vannamei"})
     assert data["meta"]["count"] == 1
-    assert data["taxonomy"][0]["nombre_especie"] == "CAMARON"
+    assert data["meta"]["search_field"] == "nombre_cientifico_canonico"
+    row = data["taxonomy"][0]
+    assert row["nombre_cientifico_canonico"] == "Litopenaeus vannamei"
+    assert row["nombres_especie_conapesca"] == "CAMARON"
 
 
 def test_get_taxonomy_no_matches(call_tool):
     data = call_tool("get_taxonomy", {"especie": "nonexistent-xyz"})
     assert data["taxonomy"] == []
-    assert data["meta"] == {"query": "nonexistent-xyz", "count": 0}
+    # nothing found on either search: the fallback was tried, so it is the reported field
+    assert data["meta"] == {
+        "query": "nonexistent-xyz", "count": 0, "search_field": "nombre_especie",
+    }
 
 
 def test_get_taxonomy_offloads_db_call_to_worker_thread(call_tool, mcp_app, monkeypatch):
