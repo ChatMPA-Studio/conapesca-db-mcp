@@ -55,7 +55,7 @@ def _install_fake_pymysql_and_dbutils(monkeypatch):
     monkeypatch.setitem(sys.modules, "dbutils.pooled_db", fake_pooled_db_module)
 
 
-def _set_mysql_config(monkeypatch, *, pool_size=5, pool_overflow=5):
+def _set_mysql_config(monkeypatch, *, pool_size=5, pool_overflow=5, connect_timeout=60, read_timeout=110):
     """mcp_server.config only defines DB_HOST/DB_POOL_SIZE/etc. when it was
     imported with USE_SQLITE=false; raising=False lets us inject them
     regardless of which mode the module happened to load under in this
@@ -68,6 +68,8 @@ def _set_mysql_config(monkeypatch, *, pool_size=5, pool_overflow=5):
     monkeypatch.setattr(config_module, "DB_NAME", "fake-db", raising=False)
     monkeypatch.setattr(config_module, "DB_POOL_SIZE", pool_size, raising=False)
     monkeypatch.setattr(config_module, "DB_POOL_MAX_OVERFLOW", pool_overflow, raising=False)
+    monkeypatch.setattr(config_module, "DB_CONNECT_TIMEOUT_SECONDS", connect_timeout, raising=False)
+    monkeypatch.setattr(config_module, "DB_READ_TIMEOUT_SECONDS", read_timeout, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +131,45 @@ def test_pool_sizing_changes_when_config_changes(monkeypatch):
 
     assert pool.kwargs["maxcached"] == 2
     assert pool.kwargs["maxconnections"] == 10
+
+
+def test_pool_uses_the_configured_read_and_connect_timeouts(monkeypatch):
+    """The read timeout is what cut species_count's first query at 60s: it must
+    come from config, and the connect timeout must stay a separate setting."""
+    _set_mysql_config(monkeypatch, connect_timeout=7, read_timeout=99)
+    _install_fake_pymysql_and_dbutils(monkeypatch)
+
+    pool = db_module._get_pool()
+
+    assert pool.kwargs["read_timeout"] == 99
+    assert pool.kwargs["connect_timeout"] == 7
+
+
+def _config_values(env_extra: dict) -> list[float]:
+    """Import mcp_server.config in a clean process (MySQL mode, no .env override)
+    and print the two timeouts."""
+    import os
+    import subprocess
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("DB_", "CONAPESCA_DB_", "DATABASE_URL"))}
+    env.update({"USE_SQLITE": "false", "CONAPESCA_DB_HOST": "h", "CONAPESCA_DB_USER": "u",
+                "CONAPESCA_DB_PASSWORD": "p", "CONAPESCA_DB_NAME": "n"})
+    env.update(env_extra)
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "from mcp_server import config as c; print(c.DB_CONNECT_TIMEOUT_SECONDS, c.DB_READ_TIMEOUT_SECONDS)"],
+        capture_output=True, text=True, env=env, check=True,
+        cwd=str(__import__("pathlib").Path(__file__).resolve().parent.parent),
+    ).stdout.split()
+    return [float(x) for x in out]
+
+
+def test_default_timeouts_are_60s_to_connect_and_110s_to_read():
+    assert _config_values({}) == [60.0, 110.0]
+
+
+def test_timeouts_can_be_overridden_by_environment():
+    assert _config_values({"DB_READ_TIMEOUT_SECONDS": "45", "DB_CONNECT_TIMEOUT_SECONDS": "5"}) == [5.0, 45.0]
 
 
 def test_concurrent_first_calls_build_pool_exactly_once(monkeypatch):

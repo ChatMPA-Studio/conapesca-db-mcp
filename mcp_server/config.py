@@ -59,6 +59,15 @@ if not USE_SQLITE:
     DB_POOL_SIZE: int         = int(_get("DB_POOL_SIZE", "5"))
     DB_POOL_MAX_OVERFLOW: int = int(_get("DB_POOL_MAX_OVERFLOW", "5"))
 
+    # DB timeouts in seconds (MySQL only). READ is how long ONE query may run
+    # before the connection is dropped: the first species_count query alone
+    # takes ~60-80s on the full table, so 60s cut it forever and its cache
+    # entry never filled. 110s stays under the orchestrator's 120s call
+    # timeout, so the MCP answers with its own error before the caller gives
+    # up. CONNECT is deliberately not raised: an unreachable DB should fail fast.
+    DB_CONNECT_TIMEOUT_SECONDS: float = float(_get("DB_CONNECT_TIMEOUT_SECONDS", "60"))
+    DB_READ_TIMEOUT_SECONDS: float    = float(_get("DB_READ_TIMEOUT_SECONDS", "110"))
+
 # ── Server -------------------------------------------------------------------
 
 PORT: int         = int(_get("PORT", "8000"))

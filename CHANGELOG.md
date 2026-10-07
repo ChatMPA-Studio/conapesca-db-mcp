@@ -57,6 +57,21 @@
   `meta.filters` lists `year_from`, `year_to`, `nombre_principal` and
   `nombre_cientifico_canonico` in every mode. The `especie` filter is unchanged.
 
+- DB read timeout raised `60s` → `110s` and made configurable (`DB_READ_TIMEOUT_SECONDS`;
+  `DB_CONNECT_TIMEOUT_SECONDS` is a separate setting and stays at `60s`). It was a constant
+  in `mcp_server/db.py`. Found in the Dev logs of the cache warm-up: the first
+  `species_count` query takes 60-80s on the full table, so the 60s read timeout dropped the
+  connection (`OperationalError 2013`, `Lost connection to MySQL server ... read operation
+  timed out`) on every attempt and its cache entry was never filled — so any question that
+  needs it failed too. 110s stays under the 120s the orchestrator waits for this MCP, so
+  the MCP answers with its own error before the caller gives up. The connect timeout is
+  not raised: an unreachable DB should still fail fast. A longer read timeout also lets a
+  runaway query hold a connection longer.
+- The cache warm-up now gives up on a failing call after `MAX_RETRY_ATTEMPTS = 2` retries
+  and waits for the next full pass (which tries it again), logging an error. Before, it
+  retried forever with a wait capped at 10 minutes, so a query that could never finish
+  (species_count in Dev, 2 minutes per attempt) kept loading the DB all day.
+
 ### Added
 - `mcp_server/warmup.py` — pre-fills the cache at startup with the no-argument
   calls of `get_version`, `get_offices`, `get_estados`, `schema_snapshot` and
