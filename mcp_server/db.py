@@ -13,7 +13,6 @@ from mcp_server.config import USE_SQLITE, SQLITE_PATH
 logger = logging.getLogger("conapesca_mcp.db")
 
 DEFAULT_MAX_ROWS = 5000
-DEFAULT_TIMEOUT  = 60
 
 
 # ── Connection pool (MySQL only) ----------------------------------------------
@@ -38,6 +37,7 @@ def _get_pool():
             from mcp_server.config import (
                 DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
                 DB_POOL_SIZE, DB_POOL_MAX_OVERFLOW,
+                DB_CONNECT_TIMEOUT_SECONDS, DB_READ_TIMEOUT_SECONDS,
             )
             _pool = PooledDB(
                 creator=pymysql,
@@ -51,8 +51,8 @@ def _get_pool():
                 database=DB_NAME,
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
-                connect_timeout=DEFAULT_TIMEOUT,
-                read_timeout=DEFAULT_TIMEOUT,
+                connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
+                read_timeout=DB_READ_TIMEOUT_SECONDS,
                 ssl={"ca": None},
             )
             logger.info(
