@@ -23,7 +23,10 @@ after the previous one started. Calls run one after another, cheapest first,
 to keep the load on the DB gentle while a previous task may still be serving
 traffic during a rolling deploy. A call that fails keeps its old entry and is
 retried on its own with a growing wait (RETRY_SECONDS doubling up to
-MAX_RETRY_SECONDS), never later than the next full pass.
+MAX_RETRY_SECONDS), never later than the next full pass. After
+MAX_RETRY_ATTEMPTS failed retries it gives up until the next full pass: a query
+that cannot finish (the DB timeout, an overloaded DB) is not worth another
+multi-minute scan every few minutes.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ WARM_CALLS: list[tuple[str, dict, tuple]] = [
 REFRESH_FRACTION = 0.8      # renew when this share of the TTL has elapsed
 RETRY_SECONDS = 60          # first wait before retrying a failed call
 MAX_RETRY_SECONDS = 600     # cap of the doubling wait
+MAX_RETRY_ATTEMPTS = 2      # retries after the first failure, per cycle; then wait for the next full pass
 MIN_DELAY = 1.0             # never spin: minimum sleep between passes
 
 
@@ -119,10 +123,17 @@ async def loop(mcp) -> None:
         calls, next_is_full = WARM_CALLS, True
         if failed:
             attempt += 1
-            retry_delay = min(RETRY_SECONDS * 2 ** (attempt - 1), MAX_RETRY_SECONDS)
-            if retry_delay < delay:
-                delay, calls, next_is_full = retry_delay, failed, False
-                logger.warning("Retrying %d failed cache call(s) in %.0fs", len(failed), delay)
+            if attempt > MAX_RETRY_ATTEMPTS:
+                logger.error(
+                    "Giving up on %d cache call(s) until the next full pass (%.0fs) after %d "
+                    "retries: %s", len(failed), delay, MAX_RETRY_ATTEMPTS,
+                    ", ".join(name for name, _, _ in failed),
+                )
+            else:
+                retry_delay = min(RETRY_SECONDS * 2 ** (attempt - 1), MAX_RETRY_SECONDS)
+                if retry_delay < delay:
+                    delay, calls, next_is_full = retry_delay, failed, False
+                    logger.warning("Retrying %d failed cache call(s) in %.0fs", len(failed), delay)
         if next_is_full:
             attempt = 0
             full_started = now + delay

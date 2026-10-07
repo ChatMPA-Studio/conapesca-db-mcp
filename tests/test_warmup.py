@@ -187,6 +187,40 @@ def test_loop_never_retries_later_than_the_next_full_pass(mcp_app, monkeypatch):
     assert state["calls"] >= 3  # the full passes (every 0.1s) kept happening despite the 50s retry wait
 
 
+def test_loop_gives_up_after_the_retry_limit_instead_of_retrying_forever(mcp_app, monkeypatch, caplog):
+    from mcp_server import warmup
+    monkeypatch.setattr(warmup, "WARM_CALLS", [ESTADOS_CALL])
+    monkeypatch.setattr(warmup, "_budget", lambda: 100.0)  # no second full pass during the test
+    monkeypatch.setattr(warmup, "RETRY_SECONDS", 0.02)
+    monkeypatch.setattr(warmup, "MAX_RETRY_SECONDS", 0.05)
+    monkeypatch.setattr(warmup, "MAX_RETRY_ATTEMPTS", 2)
+    state = _counting_db(monkeypatch, fail_first=10**6)  # the query never finishes
+
+    with caplog.at_level(logging.ERROR, logger="conapesca_mcp.warmup"):
+        _drive_loop(mcp_app, 1.0)
+
+    assert state["calls"] == 3  # the first try plus exactly two retries, then it stops
+    assert any("Giving up" in r.getMessage() and "get_estados" in r.getMessage() for r in caplog.records)
+
+
+def test_loop_tries_again_at_the_next_full_pass_after_giving_up(mcp_app, monkeypatch):
+    from mcp_server import warmup
+    monkeypatch.setattr(warmup, "WARM_CALLS", [ESTADOS_CALL])
+    monkeypatch.setattr(warmup, "_budget", lambda: 0.5)    # a new full pass every 0.5s
+    monkeypatch.setattr(warmup, "MIN_DELAY", 0.01)
+    monkeypatch.setattr(warmup, "RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(warmup, "MAX_RETRY_SECONDS", 0.02)
+    monkeypatch.setattr(warmup, "MAX_RETRY_ATTEMPTS", 2)
+    state = _counting_db(monkeypatch, fail_first=10**6)
+
+    _drive_loop(mcp_app, 2.2)
+
+    # 3 tries per cycle (1 + 2 retries) and a cycle every 0.5s: at least three full
+    # cycles of 3 must have happened. If the counter were not reset, every later
+    # cycle would give up after its first try and the total would stay near 7.
+    assert state["calls"] >= 9
+
+
 # ── start ----------------------------------------------------------------------
 
 def test_start_runs_in_a_daemon_thread_and_fills_the_cache(mcp_app, monkeypatch):
