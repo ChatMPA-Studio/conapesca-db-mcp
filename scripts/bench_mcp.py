@@ -97,6 +97,11 @@ POOL_CALLS = 20
 
 # ── medición --------------------------------------------------------------------------
 
+def _reps_for(probe: dict, max_reps: int | None) -> int:
+    """Repeticiones de una pregunta, con tope opcional (--max-reps) para no cargar un servidor sin caché."""
+    return min(probe["reps"], max_reps) if max_reps else probe["reps"]
+
+
 def _make_client(url: str, header: str | None, header_env: str | None):
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
@@ -150,7 +155,7 @@ async def run(args) -> None:
 
         results = []
         for p in probes:
-            calls = [await _timed(client, p["tool"], p["args"]) for _ in range(p["reps"])]
+            calls = [await _timed(client, p["tool"], p["args"]) for _ in range(_reps_for(p, args.max_reps))]
             results.append({k: p[k] for k in ("id", "group", "q", "tool", "args", "shows")} | {"calls": calls})
             first = calls[0]
             tag = f"{first['s']:.2f}s" if first["ok"] else f"ERROR {first.get('error','')[:60]}"
@@ -252,6 +257,7 @@ def main() -> None:
     r.add_argument("--only", help="ids separados por coma, p. ej. A1,B1,B2")
     r.add_argument("--skip-heavy", action="store_true", help="omite las pesadas (C*, D*)")
     r.add_argument("--skip-extras", action="store_true", help="omite las pruebas de pool y de concurrencia")
+    r.add_argument("--max-reps", type=int, help="tope de repeticiones por pregunta (2 basta para ver si hay caché y es amable con un servidor sin él)")
     r.set_defaults(fn=lambda a: asyncio.run(run(a)))
     c = sub.add_parser("compare", help="tabla lado a lado de dos corridas")
     c.add_argument("old"); c.add_argument("new")

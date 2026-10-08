@@ -99,6 +99,14 @@ def test_compare_skips_probes_missing_from_one_run(tmp_path, capsys):
     assert not any(l.startswith("A2 ") for l in out.splitlines())
 
 
+def test_max_reps_caps_the_repetitions_but_never_raises_them():
+    probe = {"reps": 3}
+    assert bench._reps_for(probe, None) == 3
+    assert bench._reps_for(probe, 2) == 2
+    assert bench._reps_for(probe, 1) == 1
+    assert bench._reps_for({"reps": 1}, 2) == 1
+
+
 def test_probe_ids_are_unique_and_every_probe_has_what_the_table_needs():
     ids = [p["id"] for p in bench.PROBES]
     assert len(ids) == len(set(ids))
