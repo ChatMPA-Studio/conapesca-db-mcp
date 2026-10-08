@@ -73,6 +73,14 @@
   (species_count in Dev, 2 minutes per attempt) kept loading the DB all day.
 
 ### Added
+- `scripts/bench_mcp.py` — runs the same fixed list of questions (read-only tool calls
+  covering the cache, the indexes, heavy scans, the concurrency fix, the connection pool
+  and the honest `meta.truncated`) against any CONAPESCA MCP and saves the timings, then
+  prints a side-by-side table of two runs (`run` / `compare` / `list`). Meant to show the
+  optimizations by running it against the old droplet MCP and the new ECS one: network
+  base is subtracted so distance to each server is not counted as slowness, credentials
+  go through environment variables, and the answer sizes are compared so a speed-up that
+  loses data shows up.
 - `mcp_server/warmup.py` — pre-fills the cache at startup with the no-argument
   calls of `get_version`, `get_offices`, `get_estados`, `schema_snapshot` and
   `species_count`, so the first client after each deploy doesn't pay for them,
