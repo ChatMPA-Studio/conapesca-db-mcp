@@ -238,7 +238,15 @@ def register(mcp) -> None:
         oficina: str | None,
         limit: int,
         group_by: str | None,
+        offset: int = 0,
     ) -> str:
+        offset = int(offset or 0)
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        if offset and group_by != "folio":
+            # Paging only exists where a single call can exceed the cap and the rows have a
+            # total order (folio); ignoring it elsewhere would hand back page 1 as if it were page 2.
+            raise ValueError("offset only applies to group_by='folio'")
         conditions, params = [], []
 
         # Year filters — exact OR range (not both)
@@ -292,7 +300,7 @@ def register(mcp) -> None:
 
         # Every mode below fetches ONE row past its cap (max_rows = cap + 1) to tell
         # "exactly at the cap" apart from "more rows exist beyond it", and reports it
-        # in meta.truncated.
+        # in meta.truncated. `folio` can also be paged with `offset` (see below).
 
         # ── group_by = "folio" ────────────────────────────────────────────────
         if group_by == "folio":
@@ -308,7 +316,10 @@ def register(mcp) -> None:
                 f"FROM conapesca_landings_historical {where} "
                 f"GROUP BY folio_aviso, anio_corte, tipo_aviso, "
                 f"nombre_estado, nombre_oficina "
-                f"ORDER BY anio_corte, folio_aviso",
+                # Total order (every GROUP BY column): a page boundary can never fall between
+                # two rows that compare equal, so pages neither repeat nor skip a trip.
+                f"ORDER BY anio_corte, folio_aviso, tipo_aviso, nombre_estado, nombre_oficina "
+                f"LIMIT {DEFAULT_MAX_ROWS + 1} OFFSET {offset}",
                 p, max_rows=DEFAULT_MAX_ROWS + 1,
             )
             truncated = len(rows) > DEFAULT_MAX_ROWS
@@ -319,6 +330,9 @@ def register(mcp) -> None:
                     "filters": active_filters,
                     "folio_count": len(rows),
                     "truncated": truncated,
+                    "offset": offset,
+                    # Where the next page starts; null on the last page.
+                    "next_offset": offset + len(rows) if truncated else None,
                     "note": (
                         "One row per trip. dias_efectivos is trip-level — do NOT sum "
                         "across rows of the same folio. Exclude flag_fecha_generica=1 "
@@ -475,6 +489,7 @@ def register(mcp) -> None:
         oficina: str | None = None,
         limit: int = 500,
         group_by: str | None = None,
+        offset: int = 0,
     ) -> str:
         """
         Return landing data filtered by any combination of year/range, estado,
@@ -496,6 +511,9 @@ def register(mcp) -> None:
                            species level (e.g. "Seriola lalandi").
                            Mutually exclusive with nombre_principal.
 
+        offset           : rows to skip; ONLY for group_by="folio" (any other mode
+                           raises). Default 0 = the first page.
+
         ── ROW CAPS ─────────────────────────────────────────────────────────────
         Every mode is capped (see each one below) and the cap is NOT silent:
         meta.truncated is true when more rows exist than were returned. When it
@@ -508,9 +526,16 @@ def register(mcp) -> None:
 
         "folio"          : one row per fishing trip (folio_aviso), summing
                            peso_desembarcado_kg across species lines. Includes
-                           dias_efectivos and quality flags. Capped at 5000 folios.
+                           dias_efectivos and quality flags. At most 5000 folios
+                           per call, ordered by anio_corte, folio_aviso (then the
+                           other grouping columns, so the order is total).
                            → Use for CPUE computation. A whole state-year usually
                            exceeds the cap: filter by oficina (and year).
+                           → To get past the cap, page it: while meta.truncated is
+                           true, repeat the same call with offset=meta.next_offset;
+                           the last page has next_offset = null. Pages never repeat
+                           or skip a trip. A CPUE needs every trip of its
+                           year × fleet cell, so never average a truncated page.
 
         "year"           : annual totals — total_kg, total_valor_mxn, n_records
                            per year. Capped at 100 years.
@@ -531,7 +556,7 @@ def register(mcp) -> None:
         return await asyncio.to_thread(
             _get_landings_sync, year, year_from, year_to, estado, especie,
             nombre_principal, nombre_cientifico_canonico, tipo_aviso, oficina,
-            limit, group_by,
+            limit, group_by, offset,
         )
 
     def _record_count_sync() -> str:

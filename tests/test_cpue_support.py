@@ -127,6 +127,83 @@ def test_folio_reports_truncation_and_not_exactly_at_the_cap(call_tool, monkeypa
     assert exact["meta"]["truncated"] is False and exact["meta"]["folio_count"] == 4
 
 
+# ── group_by="folio" pages with `offset` -----------------------------------------------
+
+def _all_folio_pages(call_tool) -> list[dict]:
+    """Follow meta.next_offset until the last page, the way a client past the cap does."""
+    pages, offset = [], 0
+    while True:
+        args = {"group_by": "folio", "offset": offset} if offset else {"group_by": "folio"}
+        page = call_tool("get_landings", args)
+        pages.append(page)
+        if not page["meta"]["truncated"]:
+            return pages
+        offset = page["meta"]["next_offset"]
+
+
+def test_folio_pages_cover_every_trip_exactly_once_and_in_order(call_tool, monkeypatch):
+    _cap_at(monkeypatch, 3)  # the fixture has 4 trips -> 3 + 1
+    pages = _all_folio_pages(call_tool)
+    assert [p["meta"]["truncated"] for p in pages] == [True, False]
+    assert [p["meta"]["offset"] for p in pages] == [0, 3]
+    assert [p["meta"]["next_offset"] for p in pages] == [3, None]
+    assert [r["folio_aviso"] for p in pages for r in p["by_folio"]] == ["F1", "F4", "F2", "F3"]
+
+    _cap_at(monkeypatch, 1)  # one trip per page
+    pages = _all_folio_pages(call_tool)
+    assert [r["folio_aviso"] for p in pages for r in p["by_folio"]] == ["F1", "F4", "F2", "F3"]
+    assert len(pages) == 4
+
+
+def test_folio_paged_rows_equal_the_uncapped_rows(call_tool, monkeypatch):
+    whole = call_tool("get_landings", {"group_by": "folio"})["by_folio"]
+    _cap_at(monkeypatch, 2)
+    paged = [r for p in _all_folio_pages(call_tool) for r in p["by_folio"]]
+    assert paged == whole
+
+
+def test_folio_page_at_the_exact_cap_is_the_last_one(call_tool, monkeypatch):
+    _cap_at(monkeypatch, 2)
+    second = call_tool("get_landings", {"group_by": "folio", "offset": 2})
+    assert second["meta"]["truncated"] is False and second["meta"]["next_offset"] is None
+    assert second["meta"]["folio_count"] == 2
+
+
+def test_folio_offset_past_the_end_is_an_empty_last_page(call_tool):
+    data = call_tool("get_landings", {"group_by": "folio", "offset": 50})
+    assert data["by_folio"] == []
+    assert data["meta"]["truncated"] is False and data["meta"]["next_offset"] is None
+
+
+def test_folio_pages_keep_the_filters(call_tool, monkeypatch):
+    _cap_at(monkeypatch, 1)
+    pages, offset = [], 0
+    while True:
+        page = call_tool("get_landings", {"group_by": "folio", "estado": "SINALOA", "offset": offset})
+        pages.append(page)
+        if not page["meta"]["truncated"]:
+            break
+        offset = page["meta"]["next_offset"]
+    assert [r["folio_aviso"] for p in pages for r in p["by_folio"]] == ["F1", "F4"]
+
+
+def test_folio_without_offset_is_the_first_page(call_tool, monkeypatch):
+    _cap_at(monkeypatch, 3)
+    default = call_tool("get_landings", {"group_by": "folio"})
+    explicit = call_tool("get_landings", {"group_by": "folio", "offset": 0})
+    assert default["by_folio"] == explicit["by_folio"]
+    assert default["meta"]["offset"] == 0
+
+
+def test_offset_is_rejected_where_it_does_not_apply(call_tool):
+    import pytest
+    for args in ({"offset": 5}, {"group_by": "year_fleet", "offset": 5}):
+        with pytest.raises(Exception, match="offset only applies to group_by='folio'"):
+            call_tool("get_landings", args)
+    with pytest.raises(Exception, match="offset must be >= 0"):
+        call_tool("get_landings", {"group_by": "folio", "offset": -1})
+
+
 def test_year_fleet_reports_truncation(call_tool, monkeypatch):
     _cap_at(monkeypatch, 2)  # 3 rows exist
     data = call_tool("get_landings", {"group_by": "year_fleet"})

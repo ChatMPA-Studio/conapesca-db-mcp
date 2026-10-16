@@ -14,7 +14,7 @@ data (*avisos de arribo*).
 | `get_estados(year?)` | States with landings, optional year filter |
 | `get_species(year?, estado?, tipo_aviso?, top_n?)` | Species list with total weight and value |
 | `species_count()` | Unique scientific names classified by taxonomic level |
-| `get_landings(year?, estado?, especie?, tipo_aviso?, oficina?, limit?, group_by?)` | Landing records or aggregates; `group_by`: `"year"`, `"estado"`, `"litoral"` |
+| `get_landings(year?, estado?, especie?, tipo_aviso?, oficina?, limit?, group_by?, offset?)` | Landing records or aggregates; `group_by`: `"year"`, `"year_fleet"`, `"office_year_fleet"`, `"estado"`, `"litoral"`, `"folio"`; `offset` pages `group_by="folio"` past its 5000-row cap (follow `meta.next_offset`) |
 | `get_offices(estado?)` | CONAPESCA offices with record counts |
 | `get_taxonomy(especie)` | Taxonomy + FishBase traits for a species |
 
