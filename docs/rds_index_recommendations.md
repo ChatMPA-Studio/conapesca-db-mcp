@@ -81,7 +81,8 @@ EXPLAIN SELECT folio_aviso, anio_corte, tipo_aviso,
 FROM conapesca_landings_historical
 WHERE anio_corte = 2023
 GROUP BY folio_aviso, anio_corte, tipo_aviso, nombre_estado, nombre_oficina
-ORDER BY anio_corte, folio_aviso;
+ORDER BY anio_corte, folio_aviso, tipo_aviso, nombre_estado, nombre_oficina
+LIMIT 5001 OFFSET 0;  -- OFFSET = 5000, 10000… for later pages (the `offset` argument)
 
 -- get_taxonomy('camaron') — tools/data_access.py _get_taxonomy_sync
 -- (the unindexable leading-wildcard LIKE — see Section 3)

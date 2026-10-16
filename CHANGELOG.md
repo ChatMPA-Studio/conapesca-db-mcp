@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+- `get_landings(group_by="folio")` can be paged with a new `offset` argument. A call
+  still returns at most 5000 trips, but a year × fleet cell of a large office has more
+  than that (the curated base has 85 such cells in 14 offices, all `MENORES`), and the
+  first 5000 trips by folio are not a random sample, so a CPUE computed from them is
+  biased (−22 % to +31 % measured). While `meta.truncated` is true, repeat the same
+  call with `offset=meta.next_offset`; the last page has `next_offset: null`. Every page
+  carries `meta.offset` and `meta.next_offset`. The rows are now ordered by every
+  grouping column (`anio_corte, folio_aviso, tipo_aviso, nombre_estado, nombre_oficina`),
+  a total order, so pages never repeat or skip a trip; the first sort keys are the same
+  as before. `offset` is only valid with `group_by="folio"` (any other mode, or a negative
+  value, is an error) and defaults to 0, so existing callers get the first page exactly
+  as before. Each page re-runs the `GROUP BY`; only cells over the cap need a second one.
+
 ### Fixed
 - Timeout root cause: every query opened and closed a brand-new MySQL/TLS
   connection (`mcp_server/db.py`) — replaced with a process-wide `DBUtils`
